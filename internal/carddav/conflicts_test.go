@@ -1913,9 +1913,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 				if tc.conflict == "FN" {
 					edited = bytes.ReplaceAll(fixture.body, []byte(tc.before), []byte(tc.after))
 				}
-				if tc.name == "user FN with language" {
-					edited = bytes.Replace(edited, []byte("FN:Renamed Example\r\n"), nil, 1)
-				}
 			}
 			fixture.setRemote(edited, `"remote-2"`)
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -2336,6 +2333,7 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 		name, field  string
 		sibling      bool
 		editRole     bool
+		titleLater   bool
 		siblingTitle *string
 	}{
 		{name: "TITLE", field: "TITLE"},
@@ -2343,6 +2341,7 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 		{name: "ORG", field: "ORG"},
 		{name: "TITLE with untitled sibling", field: "TITLE", sibling: true},
 		{name: "TITLE and ROLE with untitled sibling", field: "TITLE", sibling: true, editRole: true},
+		{name: "ROLE before added TITLE with untitled sibling", field: "TITLE", sibling: true, editRole: true, titleLater: true},
 		{name: "TITLE with titled sibling", field: "TITLE", sibling: true, siblingTitle: new("Unchanged title")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2352,13 +2351,25 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 			fixture, service, st, personID := publishedImportFixture(t)
 			organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
 			require.NoError(err)
-			employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
+			input := store.EmploymentInput{
 				PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"), Role: new("Developer"),
 				Department: new("Platform"), Location: new("Example City"), Description: new("Maintains archives"),
 				StartDate: &store.PartialDate{Year: new(2020), Month: new(3), Day: new(15)},
 				IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
-			})
+			}
+			if tc.titleLater {
+				input.Title = nil
+			}
+			employment, err := st.AddEmploymentContext(t.Context(), input)
 			require.NoError(err)
+			if tc.titleLater {
+				require.NoError(service.ReconcilePublications(t.Context()))
+				input.Title = new("Engineer")
+				employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
+				require.NoError(err)
+				require.NoError(service.ReconcilePublications(t.Context()))
+				require.Less(strings.Index(string(fixture.body), "ROLE:Developer"), strings.Index(string(fixture.body), "TITLE:Engineer"))
+			}
 			var sibling *store.Employment
 			if tc.sibling {
 				sibling, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Title: tc.siblingTitle, Source: store.ProvenanceUser})

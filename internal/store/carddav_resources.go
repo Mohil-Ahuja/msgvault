@@ -1413,6 +1413,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		if err != nil {
 			return false, err
 		}
+		displacedEmployments := make(map[int64][]string)
 		for _, owner := range owners {
 			mapping, kept := owner.mapping, owner.kept
 			if kept {
@@ -1424,6 +1425,9 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 					return false, err
 				}
 				if retired {
+					if mapping.Table == "employments" {
+						displacedEmployments[mapping.RowID] = append(displacedEmployments[mapping.RowID], mapping.Field)
+					}
 					continue
 				}
 			}
@@ -1436,6 +1440,16 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 			}
 		}
 		if resolveRemote {
+			employmentIDs := make([]int64, 0, len(displacedEmployments))
+			for id := range displacedEmployments {
+				employmentIDs = append(employmentIDs, id)
+			}
+			slices.Sort(employmentIDs)
+			for _, id := range employmentIDs {
+				if err := s.retireDisplacedCardDAVEmploymentFieldsTx(ctx, tx, personID, &envelope.ResourceEnvelope, id, displacedEmployments[id]); err != nil {
+					return false, err
+				}
+			}
 			envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
 			if err := s.putCardDAVPreparedEnvelopeTx(ctx, tx, bookID, personID, input.Href, envelope.ResourceEnvelope); err != nil {
 				return false, err
@@ -1548,7 +1562,7 @@ func (s *Store) retireDisplacedCardDAVOwnerTx(
 	case personAttributeValuesTableName:
 		return true, s.closeDisplacedCardDAVAttributeTx(ctx, tx, personID, mapping.RowID)
 	case "employments":
-		return true, s.retireDisplacedCardDAVEmploymentFieldTx(ctx, tx, personID, envelope, mapping)
+		return true, nil
 	case personRelationshipsTableName:
 		return true, s.supersedeDisplacedCardDAVRelationshipTx(ctx, tx, personID, mapping.RowID)
 	case personRelationshipReviewsTableName:
@@ -1584,10 +1598,10 @@ func (s *Store) closeDisplacedCardDAVAttributeTx(ctx context.Context, tx *logged
 	return err
 }
 
-func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
-	ctx context.Context, tx *loggedTx, personID int64, envelope *vcard.ResourceEnvelope, mapping vcard.NativeMapping,
+func (s *Store) retireDisplacedCardDAVEmploymentFieldsTx(
+	ctx context.Context, tx *loggedTx, personID int64, envelope *vcard.ResourceEnvelope, employmentID int64, fields []string,
 ) error {
-	employment, err := getEmploymentTx(ctx, tx, mapping.RowID)
+	employment, err := getEmploymentTx(ctx, tx, employmentID)
 	if errors.Is(err, ErrEmploymentNotFound) {
 		return nil
 	}
@@ -1595,12 +1609,6 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
 		return err
 	}
 	if employment.PersonID != personID {
-		return nil
-	}
-	if !employment.IsCurrent && !slices.ContainsFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
-		return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID
-	}) {
-		// Released history keeps its original fields when another occurrence was also edited.
 		return nil
 	}
 	if err := s.claimEmploymentPeopleTx(ctx, tx, personID); err != nil {
@@ -1614,27 +1622,30 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
 		IsCurrent: &employment.IsCurrent, IsPrimary: &employment.IsPrimary,
 		Source: employment.Source, SourceRef: employment.SourceRef, Confidence: employment.Confidence,
 	}
+	original := update
 	releaseMappings := func() {
 		envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
-			return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID
+			return candidate.Table == "employments" && candidate.RowID == employmentID
 		})
 	}
-	switch mapping.Field {
-	case "title":
-		update.Title = nil
-	case "role":
-		update.Role = nil
-	case "organization_id":
-		// A required organization stays in history after its card projection is displaced.
-		update.IsPrimary = new(false)
-		releaseMappings()
+	for _, field := range fields {
+		switch field {
+		case "title":
+			update.Title = nil
+		case "role":
+			update.Role = nil
+		case "organization_id":
+			// A required organization stays in history after its card projection is displaced.
+			update.IsPrimary = new(false)
+			releaseMappings()
+		}
 	}
-	_, err = s.reviseEmploymentTx(ctx, tx, mapping.RowID, employment.Revision, update)
-	if mapping.Field == "title" && employment.IsCurrent && errors.Is(err, ErrEmploymentDuplicateActive) {
+	_, err = s.reviseEmploymentTx(ctx, tx, employmentID, employment.Revision, update)
+	if slices.Contains(fields, "title") && employment.IsCurrent && errors.Is(err, ErrEmploymentDuplicateActive) {
 		// Preserve the reviewed job as history without changing the unrelated current job.
-		update.Title = employment.Title
+		update = original
 		update.IsCurrent, update.IsPrimary = new(false), new(false)
-		_, err = s.reviseEmploymentTx(ctx, tx, mapping.RowID, employment.Revision, update)
+		_, err = s.reviseEmploymentTx(ctx, tx, employmentID, employment.Revision, update)
 		if err == nil {
 			releaseMappings()
 		}
