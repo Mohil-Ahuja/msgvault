@@ -105,7 +105,9 @@ describe('PersonNetwork', () => {
   });
 
   it('groups every typed relationship and employment by hop and makes both entity kinds actionable', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(connected())));
+    const fixture = connected();
+    fixture.edges[0]!.label = 'works with · superseded';
+    const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(fixture)));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
@@ -116,7 +118,7 @@ describe('PersonNetwork', () => {
     await waitFor(() => expect(list.textContent).toContain('Hop 1'));
     const listText = list.textContent?.replace(/\s+/g, ' ') ?? '';
     expect(listText).toContain('Hop 2');
-    expect(listText).toContain('Selected Person works with Curated Peer');
+    expect(listText).toContain('Selected Person works with · superseded Curated Peer');
     expect(listText).toContain('Curated Peer Engineer Shared Organization');
     expect(listText).toContain('Curated Peer mentors Second Hop Person');
 
@@ -157,7 +159,7 @@ describe('PersonNetwork', () => {
     depthTwo.resolve(Response.json(connected(2)));
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
 
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended connections' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended and superseded connections' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));

@@ -134,7 +134,7 @@ describe('PersonDetail', () => {
       if (path.endsWith('/merges')) return Response.json({ merges: [], limit: 100, offset: 0 });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [{ id: 3, person_id: 7, organization_id: 2, is_current: true, is_primary: true, source: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', title: 'Engineer' }], projection: { employment_id: 3, organization_id: 2, organization_name: 'Example Org', vcard: {} } });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [
-        { counterpart_person_id: 9, counterpart_display_name: 'Synthetic Child', counterpart_label: 'child', counterpart_vcard_uid: 'urn:uuid:child', direction: 'outgoing', relationship: { id: 4, source_person_id: 7, target_person_id: 9, relationship_type_id: 1, type_slug: 'parent', forward_label: 'parent', reverse_label: 'child', is_symmetric: false, status: 'active', source: 'user', created_by: 'user', updated_by: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard_identity: {} } },
+        { counterpart_person_id: 9, counterpart_display_name: 'Synthetic Child', counterpart_label: 'child', counterpart_vcard_uid: 'urn:uuid:child', direction: 'outgoing', relationship: { id: 4, source_person_id: 7, target_person_id: 9, relationship_type_id: 1, type_slug: 'parent', forward_label: 'parent', reverse_label: 'child', is_symmetric: false, status: 'active', superseded_at: '2026-02-01T00:00:00Z', source: 'user', created_by: 'user', updated_by: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard_identity: {} } },
         { counterpart_person_id: 10, counterpart_label: 'parent', counterpart_vcard_uid: 'urn:uuid:parent', direction: 'incoming', relationship: { id: 5, source_person_id: 10, target_person_id: 7, relationship_type_id: 1, type_slug: 'parent', forward_label: 'parent', reverse_label: 'child', is_symmetric: false, status: 'active', source: 'user', created_by: 'user', updated_by: 'user', revision: 1, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', vcard_identity: {} } }
       ] });
       if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
@@ -168,7 +168,7 @@ describe('PersonDetail', () => {
     expect(document.querySelector('.attribute-summary .sensitive')?.textContent).toBe('concealed');
     expect(document.body.innerHTML).not.toContain('Synthetic value');
     expect(await screen.findByText(/Example Org/)).toBeDefined();
-    expect(screen.getByText('Synthetic Child · child')).toBeDefined();
+    expect(screen.getByText(/Synthetic Child\s*· child\s*· superseded/)).toBeDefined();
     expect(screen.getByText('urn:uuid:parent · parent')).toBeDefined();
     expect(screen.queryByText(/outgoing: parent/)).toBeNull();
     expect(requestPaths.filter((path) => path === '/api/v1/people/7/employments')).toHaveLength(1);

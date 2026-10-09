@@ -58,20 +58,19 @@ type CardDAVResource struct {
 // already decoded from the same body and are used only for safe person
 // binding; RemoteBody remains the authoritative lossless payload.
 type CardDAVRemoteResource struct {
-	Href                string
-	PreviousHref        string
-	RemoteUID           string
-	RemoteETag          string
-	RemoteBody          []byte
-	SemanticHash        string
-	DisplayName         string
-	DisplayNameIdentity VCardIdentity
-	Emails              []string
-	EmailIdentities     []VCardIdentity
-	Phones              []string
-	PhoneIdentities     []VCardIdentity
-	EmailOccurrences    []vcard.PropertyIdentity
-	PhoneOccurrences    []vcard.PropertyIdentity
+	Href             string
+	PreviousHref     string
+	RemoteUID        string
+	RemoteETag       string
+	RemoteBody       []byte
+	SemanticHash     string
+	DisplayName      string
+	Emails           []string
+	EmailIdentities  []VCardIdentity
+	Phones           []string
+	PhoneIdentities  []VCardIdentity
+	EmailOccurrences []vcard.PropertyIdentity
+	PhoneOccurrences []vcard.PropertyIdentity
 	// EquivalentLocalHash is sync-plan evidence that the current local
 	// projection and this remote body have the same CardDAV semantic hash.
 	EquivalentLocalHash string

@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.8.0**.
+it is separate from the binary release version. The current schema is **3.9.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -126,6 +126,9 @@ reports the code as that connection's failure, and run history records it as
 the failure code.
 
 Schema 3.5.0 adds the `account:` and `received:` search operators.
+
+Schema 3.9.0 adds CardDAV conflict comparison `fields` and relationship
+`superseded_at` history.
 
 Schema 3.8.0 adds [read-only remote client credentials](guides/remote-deployment.md#read-only-remote-clients), HTTP 409 for ambiguous raw-message references, and HTTP 413 for remote read limits.
 

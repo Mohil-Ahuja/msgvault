@@ -83,7 +83,7 @@
     </div>
     <div class="controls">
       <label>Depth<SelectDropdown title="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} /></label>
-      <Checkbox checked={includeEnded} label="Include ended connections" onchange={(checked) => { includeEnded = checked; }} />
+      <Checkbox checked={includeEnded} label="Include ended and superseded connections" onchange={(checked) => { includeEnded = checked; }} />
     </div>
   </header>
 

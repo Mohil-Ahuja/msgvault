@@ -91,7 +91,7 @@ func TestPersonRelationshipListRendersBothDirections(t *testing.T) {
 			{
 				"relationship": {"id": 11, "source_person_id": 3, "target_person_id": 4,
 					"relationship_type_id": 9, "type_slug": "parent", "forward_label": "parent",
-					"reverse_label": "child", "is_symmetric": false, "status": "active", "source": "user",
+					"reverse_label": "child", "is_symmetric": false, "status": "active", "superseded_at": "2026-07-31T12:00:00Z", "source": "user",
 					"created_by": "user", "updated_by": "user", "revision": 1,
 					"created_at": "2026-07-30T12:00:00Z", "updated_at": "2026-07-30T12:00:00Z"},
 				"direction": "outgoing", "counterpart_person_id": 4, "counterpart_label": "child",
@@ -131,6 +131,8 @@ func TestPersonRelationshipListRendersBothDirections(t *testing.T) {
 	assert.Contains(rendered, "5 (2f8a1b3c-1111-4111-8111-111111111111)")
 	assert.Contains(rendered, "parent")
 	assert.Contains(rendered, "2001")
+	assert.Contains(rendered, "superseded")
+	assert.Contains(rendered, "ended")
 }
 
 func TestPersonRelationshipEndSendsIfMatchFromTheCurrentRevision(t *testing.T) {

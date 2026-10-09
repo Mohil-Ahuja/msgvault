@@ -311,18 +311,6 @@ func projectConflictComparison(localBody, remoteBody []byte, localDeleted, remot
 	return local, remote
 }
 
-func projectConflictHiddenDifferences(localBody, remoteBody []byte, local, remote *ContactSummary) {
-	left, err := vcard.ParseResourceEnvelope(localBody)
-	if err != nil {
-		return
-	}
-	right, err := vcard.ParseResourceEnvelope(remoteBody)
-	if err != nil {
-		return
-	}
-	projectConflictDifferenceMarkers(conflictChangedProperties(left, right), local, remote)
-}
-
 func projectConflictDifferenceMarkers(changed map[string]bool, local, remote *ContactSummary) {
 	if local.State != ConflictSidePresent || remote.State != ConflictSidePresent {
 		return
@@ -349,7 +337,7 @@ func projectConflictDifferenceMarkers(changed map[string]bool, local, remote *Co
 					field.Labels = field.Labels[:maxPublicContactValues-1]
 					side.summary.Truncated = true
 				}
-				field.Labels = append(field.Labels, "Differs from "+side.other)
+				field.Labels = append(field.Labels, conflictDifferenceLabel(name, side.other))
 			}
 			if shown {
 				continue
@@ -364,14 +352,47 @@ func projectConflictDifferenceMarkers(changed map[string]bool, local, remote *Co
 			default:
 				safeName = "OTHER"
 			}
-			side.summary.Fields = append(side.summary.Fields, ContactField{Name: safeName, Value: "Contents hidden", Labels: []string{"Differs from " + side.other}})
+			side.summary.Fields = append(side.summary.Fields, ContactField{Name: safeName, Value: "Contents hidden", Labels: []string{conflictDifferenceLabel(name, side.other)}})
 		}
 		if len(names) > 0 && (omitted || side.summary.Truncated) {
 			if len(side.summary.Fields) >= maxPublicContactValues {
 				side.summary.Fields = side.summary.Fields[:maxPublicContactValues-1]
 			}
 			side.summary.Truncated = true
-			side.summary.Fields = append(side.summary.Fields, ContactField{Name: "OTHER", Value: "Additional differences omitted", Labels: []string{"Differs from " + side.other}})
+			side.summary.Fields = append(side.summary.Fields, ContactField{Name: "OTHER", Value: "Additional differences omitted", Labels: []string{conflictDifferenceLabel("OTHER", side.other)}})
 		}
 	}
+}
+
+func conflictDifferenceLabel(name, other string) string {
+	group := "Other"
+	switch name {
+	case "FN", "N":
+		group = "Name"
+	case "EMAIL":
+		group = "Email"
+	case "TEL":
+		group = "Phone"
+	case "ADR":
+		group = "Address"
+	case "ORG":
+		group = "Organization"
+	case "TITLE", "ROLE":
+		group = "Job"
+	case "NOTE":
+		group = "Note"
+	case "RELATED":
+		group = "Relationship"
+	case "URL":
+		group = "Website"
+	case "PHOTO", "SOUND", "KEY":
+		group = "Media"
+	case "NICKNAME":
+		group = "Nickname"
+	case "LANG":
+		group = "Language"
+	case "IMPP":
+		group = "Messaging"
+	}
+	return group + " fields differ from " + other
 }

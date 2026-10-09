@@ -281,7 +281,7 @@ var personRelationshipListCmd = &cobra.Command{
 				view.Relationship.ID, formatCLIRelationshipCounterpart(view.CounterpartPersonID,
 					view.CounterpartDisplayName, view.CounterpartVcardUID), view.CounterpartLabel,
 				view.Direction, formatCLIPartialDate(view.Relationship.StartDate),
-				formatCLIPartialDate(view.Relationship.EndDate), view.Relationship.Status)
+				formatCLIPartialDate(view.Relationship.EndDate), formatCLIRelationshipStatus(view.Relationship))
 		}
 		return w.Flush()
 	},
@@ -504,7 +504,7 @@ func writeCLIPersonRelationship(cmd *cobra.Command, edge *generated.PersonRelati
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Relationship: %d\nPerson %d is the %s of person %d\nFrom: %s\nUntil: %s\nStatus: %s\nRevision: %d\n",
 		edge.ID, edge.SourcePersonID, edge.ForwardLabel, edge.TargetPersonID,
-		formatCLIPartialDate(edge.StartDate), formatCLIPartialDate(edge.EndDate), edge.Status, edge.Revision)
+		formatCLIPartialDate(edge.StartDate), formatCLIPartialDate(edge.EndDate), formatCLIRelationshipStatus(*edge), edge.Revision)
 	return nil
 }
 
@@ -589,4 +589,11 @@ func init() {
 		"Include ended or superseded relationships")
 	personRelationshipReviewsCmd.Flags().StringVar(&relationshipReviewStatus, "status", "",
 		"Filter by review status: pending, accepted, or rejected")
+}
+
+func formatCLIRelationshipStatus(edge generated.PersonRelationship) string {
+	if edge.SupersededAt != nil {
+		return "superseded"
+	}
+	return edge.Status
 }

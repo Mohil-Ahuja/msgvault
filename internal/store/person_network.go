@@ -390,7 +390,7 @@ func (s *Store) hydratePersonNetworkRelationships(
 		       relationship_type.slug,
 		       relationship_type.forward_label,
 		       relationship.start_year, relationship.start_month, relationship.start_day,
-		       relationship.end_year, relationship.end_month, relationship.end_day
+		       relationship.end_year, relationship.end_month, relationship.end_day, relationship.superseded_at IS NOT NULL
 		FROM selected_relationships selected
 		JOIN person_relationships relationship ON relationship.id = selected.id
 		JOIN relationship_types relationship_type ON relationship_type.id = relationship.relationship_type_id
@@ -409,12 +409,16 @@ func (s *Store) hydratePersonNetworkRelationships(
 			sourceLabel, targetLabel, slug, label string
 			startYear, startMonth, startDay       sql.NullInt64
 			endYear, endMonth, endDay             sql.NullInt64
+			superseded                            bool
 		)
 		if err := rows.Scan(
 			&id, &sourceID, &sourceLabel, &targetID, &targetLabel, &slug, &label,
-			&startYear, &startMonth, &startDay, &endYear, &endMonth, &endDay,
+			&startYear, &startMonth, &startDay, &endYear, &endMonth, &endDay, &superseded,
 		); err != nil {
 			return nil, fmt.Errorf("scan person network relationship: %w", err)
+		}
+		if superseded {
+			label += " · superseded"
 		}
 		relationshipSlug := slug
 		hydrated[id] = personNetworkHydratedEdge{

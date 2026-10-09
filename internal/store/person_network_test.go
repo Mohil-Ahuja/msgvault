@@ -350,6 +350,12 @@ func TestGetPersonNetworkContextIncludesEndedRowsOnlyWhenRequested(t *testing.T)
 		EndDate: &ended, Source: store.ProvenanceUser, Actor: "test",
 	})
 	require.NoError(err)
+	superseded, err := f.Store.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
+		SourcePersonID: root.ID, TargetPersonID: peer.ID, TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "test",
+	})
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE person_relationships SET superseded_at = CURRENT_TIMESTAMP WHERE id = ?`), superseded.ID)
+	require.NoError(err)
 	createNetworkEmployment(t, f.Store, peer.ID, organization.ID, false)
 
 	current, err := f.Store.GetPersonNetworkContext(t.Context(), root.ID, store.PersonNetworkOptions{Depth: 2})
@@ -360,7 +366,16 @@ func TestGetPersonNetworkContextIncludesEndedRowsOnlyWhenRequested(t *testing.T)
 	history, err := f.Store.GetPersonNetworkContext(t.Context(), root.ID, store.PersonNetworkOptions{Depth: 2, IncludeEnded: true})
 	require.NoError(err)
 	assert.Len(history.Nodes, 3)
-	assert.Len(history.Edges, 2)
+	assert.Len(history.Edges, 3)
+	labels := make([]string, 0, len(history.Edges))
+	for _, edge := range history.Edges {
+		labels = append(labels, edge.Label)
+	}
+	assert.Contains(labels, "friend · superseded")
+	retained, err := f.Store.GetPersonRelationshipContext(t.Context(), superseded.ID)
+	require.NoError(err)
+	assert.Equal(store.RelationshipStatusActive, retained.Status)
+	assert.Nil(retained.EndDate)
 }
 
 func TestGetPersonNetworkContextUsesEmploymentTitleRoleLabelFallback(t *testing.T) {

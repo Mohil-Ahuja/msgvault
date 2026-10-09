@@ -103,8 +103,7 @@ func TestProjectConflictHiddenDifferencesIdentifyPrivateFields(t *testing.T) {
 
 	localBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\nNOTE:private-local-note\r\nRELATED:private-local-target\r\nEND:VCARD\r\n")
 	remoteBody := []byte(strings.ReplaceAll(strings.ReplaceAll(string(localBody), "private-local-note", "private-remote-note"), "private-local-target", "private-remote-target"))
-	local, remote := projectConflictContact(localBody, false), projectConflictContact(remoteBody, false)
-	projectConflictHiddenDifferences(localBody, remoteBody, &local, &remote)
+	local, remote := projectConflictComparison(localBody, remoteBody, false, false)
 	require.Len(local.Fields, 2)
 	require.Len(remote.Fields, 2)
 	assert.Equal("NOTE", remote.Fields[0].Name)
@@ -193,4 +192,17 @@ func TestProjectConflictComparisonMarksHiddenAndBoundedDifferences(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestProjectConflictRepeatedFieldLabelsDescribeTheGroup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\nEMAIL:first@example.test\r\nEMAIL;TYPE=home:second@example.test\r\nEND:VCARD\r\n")
+	remoteBody := []byte(strings.ReplaceAll(string(body), "TYPE=home", "TYPE=work"))
+	local, remote := projectConflictComparison(body, remoteBody, false, false)
+	require.Len(local.Fields, 2)
+	require.Len(remote.Fields, 2)
+	assert.Equal("first@example.test", remote.Fields[0].Value)
+	assert.Equal([]string{"Email fields differ from remote"}, local.Fields[0].Labels)
+	assert.Equal([]string{"Email fields differ from local"}, remote.Fields[0].Labels)
 }

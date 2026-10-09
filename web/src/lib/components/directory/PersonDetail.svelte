@@ -213,7 +213,7 @@
         <section><h3>Organizations and employment</h3><ul>{#each entityController.employments as employment}<li>{employment.title ?? employment.role ?? 'Employment'} · {employmentOrganization(employment.id) ?? `Organization ${employment.organization_id}`}{#if employment.is_current} <small>Current</small>{/if}</li>{/each}</ul></section>
       {/if}
       {#if entityController?.relationships.length}
-        <section><h3>Connections</h3><ul>{#each entityController.relationships as view}<li>{view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`} · {view.counterpart_label}</li>{/each}</ul></section>
+        <section><h3>Connections</h3><ul>{#each entityController.relationships as view}<li>{view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`} · {view.counterpart_label}{#if view.relationship.superseded_at} · superseded{/if}</li>{/each}</ul></section>
       {/if}
       {#if bundle.person?.id === personID}
         <MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }}
