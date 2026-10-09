@@ -37,12 +37,7 @@ type propertyRender struct {
 	mediaType    string
 }
 
-// NormalizePropertyForVersion applies the renderer's version conversion to one property.
-func NormalizePropertyForVersion(property Property, sourceVersion, targetVersion Version) (Property, bool, error) {
-	return normalizePropertyForVersion(property, sourceVersion, targetVersion)
-}
-
-// normalizePropertyForVersion converts one property to the target version.
+// NormalizePropertyForVersion converts one property to the target version.
 // It reports omit=true when the vCard 3 compatibility view has no spelling for
 // the occurrence; the canonical vCard 4 render never omits.
 //
@@ -50,7 +45,7 @@ func NormalizePropertyForVersion(property Property, sourceVersion, targetVersion
 // carries a transfer declaration (CHARSET, ENCODING, or a bare 2.1 token):
 // the canonical render is idempotent and preserves the source spelling of
 // every parameter it does not own.
-func normalizePropertyForVersion(
+func NormalizePropertyForVersion(
 	property Property, sourceVersion, targetVersion Version,
 ) (Property, bool, error) {
 	if sourceVersion == Version40 && targetVersion == Version40 &&

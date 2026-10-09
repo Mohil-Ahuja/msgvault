@@ -2310,6 +2310,72 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 	}
 }
 
+func TestKeepRemoteInvalidatesPullFetchedBeforeConflictPreparation(t *testing.T) {
+	for _, tombstone := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote-tombstone-%t", tombstone), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture, service, st, personID := publishedImportFixture(t)
+			account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
+			require.NoError(err)
+			books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+			require.NoError(err)
+			require.Len(books, 1)
+			book := books[0]
+			held, err := service.fetchBookPlan(t.Context(), *account, book, SyncOptions{Full: true}, &Budget{remaining: defaultOperationBytes}, &bookSyncState{})
+			require.NoError(err)
+			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: "local@example.test",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(err)
+			remote := bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("accepted@example.test"), 1)
+			if tombstone {
+				remote = nil
+			}
+			fixture.setRemote(remote, `"newer"`)
+			fixture.force412 = true
+			require.NoError(service.ReconcilePublications(t.Context()))
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(err)
+			require.Len(conflicts, 1)
+			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: "newer-local@example.test",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(err)
+			require.ErrorIs(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote), store.ErrCardDAVConflictStale)
+			books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+			require.NoError(err)
+			assert.Equal(book.SyncRevision, books[0].SyncRevision)
+			require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+			books, err = st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+			require.NoError(err)
+			assert.Equal(book.SyncRevision+1, books[0].SyncRevision)
+			accepted, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+			require.NoError(err)
+			require.NoError(service.prepareSyncConflicts(t.Context(), book, &held))
+			_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), held)
+			require.ErrorIs(err, store.ErrCardDAVStalePlan)
+			after, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+			require.NoError(err)
+			assert.Equal(accepted.Fingerprint, after.Fingerprint)
+			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVConflictResolved, resolved.Status)
+			assert.Equal(store.CardDAVResolutionKeepRemote, resolved.Resolution)
+			resources, err := st.ListCardDAVResourcesContext(t.Context(), book.ID)
+			require.NoError(err)
+			if tombstone {
+				assert.Empty(resources)
+			} else {
+				require.Len(resources, 1)
+				assert.Equal(remote, resources[0].RemoteBody)
+			}
+		})
+	}
+}
+
 func TestKeepRemoteRejectsAndRefreshesAfterLocalEmploymentEdit(t *testing.T) {
 	for _, change := range []string{"title", "tombstone", "organization"} {
 		t.Run(change, func(t *testing.T) {
@@ -3018,6 +3084,67 @@ func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
 	assert.Equal(field, view.Remote.Fields[0].Name)
 	assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
 	assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
+}
+
+func TestEncodedPrimaryNameTracksRemoteRenameAndPreservesLocalChoice(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, property, want string
+		legacy, local                 bool
+	}{
+		{name: "UTF-8 quoted printable", version: "3.0", property: "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:Primary=20Name", want: "Primary Name"},
+		{name: "Latin-1 quoted printable", version: "3.0", property: "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=ISO-8859-1:Andr=E9 Example", want: "André Example"},
+		{name: "v2.1 literal backslashes", version: "2.1", property: `FN:Primary\nName`, want: `Primary\nName`},
+		{name: "legacy raw scalar", version: "3.0", property: "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:Primary=20Name", want: "Primary Name", legacy: true},
+		{name: "local scalar rename", version: "3.0", property: "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:Primary=20Name", want: "Primary Name", local: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			body := []byte("BEGIN:VCARD\r\nVERSION:" + tc.version + "\r\nUID:person\r\n" + tc.property + "\r\nEMAIL:person@example.test\r\nEND:VCARD\r\n")
+			fixture := &conflictMutationServer{body: body, etag: `"primary"`}
+			server := httptest.NewServer(fixture.handler(t))
+			t.Cleanup(server.Close)
+			service, st, book := newPullService(t, server, false)
+			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+			require.NoError(err)
+			require.NotNil(mapping.PersonID)
+			person, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+			require.NoError(err)
+			assert.Equal(new(tc.want), person.DisplayName)
+			names, err := st.ListPersonNamesContext(t.Context(), person.ID, true)
+			require.NoError(err)
+			require.Len(names, 1)
+			assert.Equal(person.DisplayName, names[0].Formatted)
+			if tc.legacy {
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE persons SET display_name = ? WHERE id = ?`), "Primary=20Name", person.ID)
+			} else if tc.local {
+				_, err = st.UpdatePersonDisplayNameContext(t.Context(), person.ID, person.Revision, new("User chosen name"))
+			}
+			require.NoError(err)
+			fixture.setRemote(bytes.Replace(body, []byte(tc.property), []byte("FN:Renamed Example"), 1), `"renamed"`)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			if tc.legacy || tc.local {
+				conflicts, err := service.ListConflicts(t.Context())
+				require.NoError(err)
+				require.Len(conflicts, 1)
+				require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+			}
+			person, err = st.GetPersonContext(t.Context(), person.ID)
+			require.NoError(err)
+			want := "Renamed Example"
+			if tc.local {
+				want = "User chosen name"
+			}
+			assert.Equal(new(want), person.DisplayName)
+			names, err = st.ListPersonNamesContext(t.Context(), person.ID, true)
+			require.NoError(err)
+			require.Len(names, 1)
+			assert.Equal(new("Renamed Example"), names[0].Formatted)
+		})
+	}
 }
 
 func TestEncodedSecondaryNamesSurviveImportAndPublication(t *testing.T) {

@@ -1382,6 +1382,9 @@ func (s *Store) resolveCardDAVConflictRemoteAttempt(
 				}
 			}
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`, book.ID); err != nil {
+			return fmt.Errorf("advance CardDAV remote choice sync revision: %w", err)
+		}
 		resolved, err = resolveCardDAVConflictAuditTx(ctx, tx, s.dialect, conflict.ID,
 			CardDAVResolutionKeepRemote)
 		return err

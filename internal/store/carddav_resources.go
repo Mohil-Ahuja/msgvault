@@ -1469,7 +1469,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		s.dialect.SelectForUpdate(), personID).Scan(&currentDisplay); err != nil {
 		return false, fmt.Errorf("lock CardDAV projection person: %w", err)
 	}
-	var priorDisplay string
+	var priorDisplay, legacyPriorDisplay string
 	if envelope != nil {
 		for _, occurrence := range envelope.PropertyTree {
 			if strings.EqualFold(occurrence.Property.Name, "FN") {
@@ -1482,6 +1482,10 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 					return false, fmt.Errorf("decode prior CardDAV display label: %w", err)
 				}
 				priorDisplay = strings.TrimSpace(value)
+				// Older imports stored the producer's unconverted spelling in the display scalar.
+				if legacy, err := vcard.UnescapeText(occurrence.Property.RawValue); err == nil {
+					legacyPriorDisplay = strings.TrimSpace(legacy)
+				}
 				if priorDisplay != "" {
 					break
 				}
@@ -1489,7 +1493,8 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 		}
 	}
 	remoteOwnsDisplay := !currentDisplay.Valid ||
-		(priorDisplay != "" && currentDisplay.String == priorDisplay)
+		(priorDisplay != "" && currentDisplay.String == priorDisplay) ||
+		(legacyPriorDisplay != "" && currentDisplay.String == legacyPriorDisplay)
 
 	for _, table := range []string{"person_names", "person_contact_points"} {
 		query := `UPDATE ` + table + ` SET

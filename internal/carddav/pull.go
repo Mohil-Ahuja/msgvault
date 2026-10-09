@@ -381,7 +381,11 @@ func parseRemoteResource(href, etag string, body []byte) (store.CardDAVRemoteRes
 			}
 		case "FN":
 			if resource.DisplayName == "" {
-				value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
+				property, _, err := vcard.NormalizePropertyForVersion(property, envelope.RenderMetadata.StoredVersion, vcard.Version40)
+				if err != nil {
+					return store.CardDAVRemoteResource{}, fmt.Errorf("convert CardDAV FN: %w", err)
+				}
+				value, err := cardDAVPropertyValue(vcard.Version40, property)
 				if err != nil {
 					return store.CardDAVRemoteResource{}, fmt.Errorf("decode CardDAV FN: %w", err)
 				}

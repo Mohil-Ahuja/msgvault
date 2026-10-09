@@ -437,7 +437,7 @@ func (e ResourceEnvelope) cardForRender(version Version) (Card, error) {
 		if strings.EqualFold(property.Name, "VERSION") {
 			property.RawValue = string(version)
 		}
-		property, omit, err := normalizePropertyForVersion(property, sourceVersion, version)
+		property, omit, err := NormalizePropertyForVersion(property, sourceVersion, version)
 		if err != nil {
 			return Card{}, err
 		}
