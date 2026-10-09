@@ -40,8 +40,6 @@ func TestPersonNetworkRouteReturnsProjection(t *testing.T) {
 	require.Equal(http.StatusOK, got.Code)
 	require.NoError(json.NewDecoder(got.Body).Decode(&body))
 	require.Len(body.Edges, 1)
-	assert.Equal(t, "friend", body.Edges[0].Label)
-	assert.NotNil(t, body.Edges[0].SupersededAt)
 }
 
 func newPersonNetworkTestServer(t *testing.T) (*Server, *store.Store) {

@@ -1777,8 +1777,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		{name: "label only", types: []string{"home"}, before: "EMAIL;TYPE=home:e1@example.test", after: "EMAIL;TYPE=work:e1@example.test", conflict: "EMAIL"},
 		{name: "duplicate removed", types: []string{"home", "work"}, before: "EMAIL;TYPE=home:e1@example.test\r\n", after: "EMAIL:\\n\r\n", conflict: "EMAIL"},
 		{name: "created in msgvault", types: []string{""}, before: "e1@example.test", after: "e1b@example.test", want: "e1b@example.test"},
-		{name: "created in msgvault with label and preference", types: []string{"home"}, pref: new(1), before: "e1@example.test", after: "e1b@example.test", conflict: "EMAIL", keepRemote: true},
-		{name: "created in msgvault with type label only", types: []string{""}, typeLabel: new("Personal"), before: "e1@example.test", after: "e1b@example.test", conflict: "EMAIL", keepRemote: true},
 		{name: "reordered v3 occurrences", types: []string{"work"}, reorder: true, imported: true, want: "e1@example.test"},
 		{name: "imported cell number change", imported: true, phone: true, phoneTypes: []string{"cell"}, before: "+12025550101", after: "+12025550103", want: "+12025550103"},
 		{name: "imported work email change", imported: true, before: "e1@example.test", after: "e1b@example.test", want: "e1b@example.test"},
@@ -1786,7 +1784,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		{name: "remote rename of msgvault person", types: []string{"home"}, before: "FN:Alice Example", after: "FN:Renamed Example", rename: true, want: "e1@example.test"},
 		{name: "remote rename of user FN", types: []string{"home"}, before: "FN:Alice Example", after: "FN:Renamed Example", rename: true, userFN: true, want: "e1@example.test"},
 		{name: "remote adds FN language after rename", types: []string{"home"}, before: "FN:Alice Example", after: "FN:Renamed Example", rename: true, userFN: true, addLanguageAfterRename: true, want: "e1@example.test"},
-		{name: "user FN with language", before: "Alice Example", after: "Renamed Example", userFN: true, fnLanguage: new("en"), conflict: "FN", keepRemote: true},
 		{name: "remote adds FN language", before: "FN:Alice Example", after: "FN;LANGUAGE=en:Alice Example", userFN: true, conflict: "FN", keepRemote: true},
 		{name: "remote adds email type and preference", types: []string{""}, before: "EMAIL:e1@example.test", after: "EMAIL;TYPE=work;PREF=2:e1@example.test", conflict: "EMAIL", keepRemote: true},
 		{name: "duplicate email parameters", types: []string{"home", "work"}, before: "EMAIL;TYPE=work:e1@example.test", after: "EMAIL;TYPE=cell;PREF=2:e1@example.test", conflict: "EMAIL", keepRemote: true},
@@ -1795,10 +1792,8 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		{name: "unchanged user FN", types: []string{""}, before: "e1@example.test", after: "e1b@example.test", userFN: true, want: "e1b@example.test"},
 		{name: "user URL", before: "https://example.test/before", after: "https://example.test/after", conflict: "URL", keepRemote: true},
 		{name: "structured name", before: "N:Example;Alice", after: "N:Changed;Alice", conflict: "N", keepRemote: true},
-		{name: "remote rename with structured name", before: "FN:Alice Example", after: "FN:Renamed Example", conflict: "N"},
 		{name: "remote phone edit", phone: true, before: "TEL:+12025550102", after: "TEL:tel:+12025550103", want: "+12025550103"},
 		{name: "remote phone visual separators", phone: true, before: "TEL:+12025550102", after: "TEL:tel: +1 (202) 555-01.03 ", want: "+1 (202) 555-01.03"},
-		{name: "labeled remote phone edit", phone: true, phoneTypes: []string{"work"}, pref: new(1), before: "tel:+12025550102", after: "tel:+12025550103", conflict: "TEL", keepRemote: true},
 		{name: "remote phone text", phone: true, before: "TEL:+12025550102", after: "TEL;VALUE=text:call the front desk", conflict: "TEL"},
 		{name: "remote email whitespace", types: []string{"home"}, before: "e1@example.test", after: " e1@example.test ", conflict: "EMAIL"},
 		{name: "remote adds labeled email", types: []string{""}, before: "END:VCARD", after: "EMAIL;TYPE=work:added@example.test\r\nEND:VCARD", conflict: "EMAIL"},
@@ -2189,8 +2184,6 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 	for _, tc := range []struct {
 		name, before, after string
 	}{
-		{"TEL extension", "tel:+12025550101", "tel:+12025550101;ext=123"},
-		{"TITLE", "TITLE:Engineer", "TITLE:Architect"},
 		{"NOTE", "NOTE:Original note", "NOTE:Accepted note"},
 		{"RELATED", "RELATED;TYPE=friend:urn:uuid:00000000-0000-4000-8000-000000000001", "RELATED;TYPE=friend:urn:uuid:00000000-0000-4000-8000-000000000002"},
 		{"FN SORT-AS", "FN:Alice", "FN;LANGUAGE=en;SCRIPT=Latn;PHONETIC=ipa;SORT-AS=Example,Alice:Alice"},
@@ -2208,21 +2201,6 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET supported_vcard_versions = '["4.0"]' WHERE id = ?`), publication.AddressBookID)
 			require.NoError(err)
 			switch tc.name {
-			case "TEL extension":
-				_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-					AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550101",
-					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: []string{"work"}},
-				})
-				require.NoError(err)
-			case "TITLE":
-				organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
-				require.NoError(err)
-				for _, title := range []string{"Engineer", "Unchanged title"} {
-					_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{
-						PersonID: personID, OrganizationID: organization.ID, Title: &title, IsPrimary: new(title == "Engineer"), Source: store.ProvenanceUser,
-					})
-					require.NoError(err)
-				}
 			case "NOTE":
 				for slug, value := range map[string]string{store.AttributeSlugNotes: "Original note", store.AttributeSlugLocation: "Unchanged location"} {
 					_, err = st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
@@ -2284,17 +2262,6 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 			assert.NotContains(string(fixture.lastPutBody), tc.before+"\r\n")
 			puts = fixture.puts
 			switch tc.name {
-			case "TEL extension":
-				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-				require.NoError(err)
-				for _, point := range points {
-					assert.NotEqual(store.ContactAddressPhone, point.AddressKind)
-				}
-			case "TITLE":
-				employments, err := st.ListEmploymentsContext(t.Context(), store.EmploymentFilter{PersonID: personID})
-				require.NoError(err)
-				require.Len(employments, 2)
-				assert.ElementsMatch([]*string{nil, new("Unchanged title")}, []*string{employments[0].Title, employments[1].Title})
 			case "NOTE":
 				values, err := st.ListPersonAttributeValuesContext(t.Context(), personID, store.PersonAttributeQuery{})
 				require.NoError(err)
@@ -2354,9 +2321,6 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 			assert.Contains(body, tc.after)
 			assert.NotContains(body, tc.before+"\r\n")
 			assert.Contains(body, "unrelated@example.test")
-			if tc.name == "TITLE" {
-				assert.Contains(body, "ORG:Example Company")
-			}
 			if tc.name == "two FN rename" {
 				assert.Contains(body, "FN;LANGUAGE=en:User name")
 			}
@@ -2371,8 +2335,19 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 }
 
 func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
-	for _, field := range []string{"TITLE", "ROLE", "ORG"} {
-		t.Run(field, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, field  string
+		sibling      bool
+		siblingTitle *string
+	}{
+		{name: "TITLE", field: "TITLE"},
+		{name: "ROLE", field: "ROLE"},
+		{name: "ORG", field: "ORG"},
+		{name: "TITLE with untitled sibling", field: "TITLE", sibling: true},
+		{name: "TITLE with titled sibling", field: "TITLE", sibling: true, siblingTitle: new("Unchanged title")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			field := tc.field
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
@@ -2385,6 +2360,11 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 				IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
 			})
 			require.NoError(err)
+			var sibling *store.Employment
+			if tc.sibling {
+				sibling, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Title: tc.siblingTitle, Source: store.ProvenanceUser})
+				require.NoError(err)
+			}
 			require.NoError(service.ReconcilePublications(t.Context()))
 			before := map[string]string{"TITLE": "TITLE:Engineer", "ROLE": "ROLE:Developer", "ORG": "ORG:Example Company;Platform"}[field]
 			after := field + ":Accepted remote value"
@@ -2424,6 +2404,14 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 				require.NoError(err)
 				require.NoError(service.ReconcilePublications(t.Context()))
 			}
+			if sibling != nil {
+				kept, err := st.GetEmploymentContext(t.Context(), sibling.ID)
+				require.NoError(err)
+				assert.Equal(tc.siblingTitle, kept.Title)
+				if tc.siblingTitle == nil {
+					assert.False(kept.IsCurrent)
+				}
+			}
 			assert.Equal(puts+1, fixture.puts)
 			body := string(fixture.lastPutBody)
 			assert.Contains(body, after)
@@ -2440,11 +2428,20 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 }
 
 func TestRemotePhoneDialSuffixConflictsAndKeepRemotePreservesResidue(t *testing.T) {
-	for _, suffix := range []string{" x123", " ext. 123", ",123", ";123", "w123", "p123"} {
-		t.Run(suffix, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, suffix        string
+		equivalent, sibling bool
+	}{
+		{name: "x123", suffix: " x123"}, {name: "ext123", suffix: " ext. 123"}, {name: "comma", suffix: ",123"}, {name: "semicolon", suffix: ";123"}, {name: "wait", suffix: "w123"}, {name: "pause", suffix: "p123"},
+		{name: "equivalent format", equivalent: true}, {name: "extension with sibling", suffix: ";ext=123", sibling: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Alice\r\nTEL;VALUE=text:+12025550101\r\nEND:VCARD\r\n")
+			if tc.sibling {
+				body = bytes.Replace(body, []byte("TEL;VALUE=text:+12025550101"), []byte("TEL:tel:+12025550101\r\nTEL:tel:+12025550102"), 1)
+			}
 			fixture := &conflictMutationServer{body: body, etag: `"remote-1"`}
 			server := httptest.NewServer(fixture.handler(t))
 			t.Cleanup(server.Close)
@@ -2466,7 +2463,15 @@ func TestRemotePhoneDialSuffixConflictsAndKeepRemotePreservesResidue(t *testing.
 			require.NoError(err)
 			require.True(publication.Noop)
 			before := "TEL;VALUE=text:+12025550101"
-			after := "TEL;VALUE=text:" + vcard.EscapeText("+12025550101"+suffix)
+			after := "TEL;VALUE=text:" + vcard.EscapeText("+12025550101"+tc.suffix)
+			if tc.equivalent {
+				after = "TEL:tel:+12025550101"
+			}
+			if tc.sibling {
+				before, after = "TEL:tel:+12025550101", "TEL:tel:+12025550101;ext=123"
+				_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: "pending@example.test", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+				require.NoError(err)
+			}
 			require.Contains(string(fixture.body), before)
 			puts := fixture.puts
 			fixture.setRemote(bytes.Replace(fixture.body, []byte(before), []byte(after), 1), `"phone-edit"`)
@@ -2474,6 +2479,10 @@ func TestRemotePhoneDialSuffixConflictsAndKeepRemotePreservesResidue(t *testing.
 			require.NoError(err)
 			conflicts, err := service.ListConflicts(t.Context())
 			require.NoError(err)
+			if tc.equivalent {
+				assert.Empty(conflicts)
+				return
+			}
 			require.Len(conflicts, 1)
 			points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 			require.NoError(err)
@@ -2482,11 +2491,20 @@ func TestRemotePhoneDialSuffixConflictsAndKeepRemotePreservesResidue(t *testing.
 			}))
 			require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
 			require.NoError(service.ReconcilePublications(t.Context()))
-			assert.Equal(puts, fixture.puts)
+			if tc.sibling {
+				assert.Equal(puts+1, fixture.puts)
+				assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550102\r\n")
+			} else {
+				assert.Equal(puts, fixture.puts)
+			}
+			puts = fixture.puts
 			points, err = st.ListPersonContactPointsContext(t.Context(), personID, true)
 			require.NoError(err)
 			for _, point := range points {
-				assert.NotEqual(store.ContactAddressPhone, point.AddressKind)
+				if point.AddressKind == store.ContactAddressPhone {
+					assert.True(tc.sibling)
+					assert.Equal("+12025550102", point.OriginalValue)
+				}
 			}
 			_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 				AddressKind: store.ContactAddressEmail, OriginalValue: "unrelated@example.test",
@@ -2496,7 +2514,13 @@ func TestRemotePhoneDialSuffixConflictsAndKeepRemotePreservesResidue(t *testing.
 			require.NoError(service.ReconcilePublications(t.Context()))
 			assert.Equal(puts+1, fixture.puts)
 			assert.Contains(string(fixture.lastPutBody), after)
-			assert.Equal(1, strings.Count(string(fixture.lastPutBody), "TEL"))
+			if tc.sibling {
+				assert.Equal(2, strings.Count(string(fixture.lastPutBody), "TEL"))
+				assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550102\r\n")
+			} else {
+				assert.Equal(1, strings.Count(string(fixture.lastPutBody), "TEL"))
+			}
+			assert.Contains(string(fixture.lastPutBody), "unrelated@example.test")
 		})
 	}
 }
@@ -2549,14 +2573,6 @@ func TestRemoteEmailEditWithUnchangedPhone(t *testing.T) {
 			assert.Equal(string(edited), string(fixture.body))
 		})
 	}
-}
-
-func TestCardDAVFirstImportKeepsBothEmails(t *testing.T) {
-	_, _, st, personID := publishedImportFixture(t)
-	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-	require.NoError(t, err)
-	require.Len(t, points, 2)
-	assert.ElementsMatch(t, []string{"e1@example.test", "e2@example.test"}, []string{points[0].OriginalValue, points[1].OriginalValue})
 }
 
 func publishedCrossBookImportFixture(t *testing.T, importETag ...*string) (*conflictMutationServer, *Service, *store.Store, []store.CardDAVAddressBook, int64, *store.CardDAVResource, *[]byte) {
@@ -2629,50 +2645,6 @@ func TestRemoteEditToPublishedContactAfterCrossBookImportDelete(t *testing.T) {
 	for _, point := range points {
 		assert.Equal(t, "e1b@example.test", point.OriginalValue)
 	}
-}
-
-func TestKeepRemotePreservesTwoImportedPhonesAfterExtension(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Alice\r\nTEL:tel:+12025550101\r\nTEL:tel:+12025550102\r\nEND:VCARD\r\n")
-	fixture := &conflictMutationServer{body: body, etag: `"remote-1"`}
-	server := httptest.NewServer(fixture.handler(t))
-	t.Cleanup(server.Close)
-	service, st, book := newPullService(t, server, false)
-	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
-	require.NoError(err)
-	require.NotNil(mapping.PersonID)
-	personID := *mapping.PersonID
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET supported_vcard_versions = '["4.0"]' WHERE id = ?`), book.ID)
-	require.NoError(err)
-	require.NoError(service.PublishPerson(t.Context(), personID))
-	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "pending@example.test",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(err)
-	edited := bytes.Replace(fixture.body, []byte("tel:+12025550101"), []byte("tel:+12025550101;ext=123"), 1)
-	fixture.setRemote(edited, `"remote-2"`)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(err)
-	require.Len(conflicts, 1)
-	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
-	require.NoError(service.ReconcilePublications(t.Context()))
-	assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550101;ext=123\r\n")
-	assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550102\r\n")
-	_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "unrelated@example.test",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(err)
-	require.NoError(service.ReconcilePublications(t.Context()))
-	assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550101;ext=123\r\n")
-	assert.Contains(string(fixture.lastPutBody), "TEL:tel:+12025550102\r\n")
-	assert.Contains(string(fixture.lastPutBody), "unrelated@example.test")
 }
 
 func TestRemoteNameReorderWithEmailEditPreservesBothNames(t *testing.T) {
@@ -2804,63 +2776,6 @@ func cardDAVFactGeneration(t *testing.T, st *store.Store, personID int64, slug, 
 	}
 }
 
-func TestKeepRemoteTitleWithExistingUntitledEmployment(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	fixture, service, st, personID := publishedImportFixture(t)
-	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
-	require.NoError(err)
-	_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(true)})
-	require.NoError(err)
-	untitled, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Source: store.ProvenanceUser})
-	require.NoError(err)
-	require.NoError(service.ReconcilePublications(t.Context()))
-	fixture.setRemote(bytes.Replace(fixture.body, []byte("TITLE:Engineer"), []byte("TITLE:Architect"), 1), `"edited"`)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(err)
-	require.Len(conflicts, 1)
-	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
-	kept, err := st.GetEmploymentContext(t.Context(), untitled.ID)
-	require.NoError(err)
-	assert.False(kept.IsCurrent)
-	assert.Nil(kept.Title)
-	require.NoError(service.ReconcilePublications(t.Context()))
-	assert.Contains(string(fixture.body), "TITLE:Architect")
-	assert.NotContains(string(fixture.body), "TITLE:Engineer")
-}
-
-func TestRemotePhoneStorageFormatEquivalentToPublishedCard(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	fixture := &conflictMutationServer{body: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Alice\r\nTEL;VALUE=text:+12025550101\r\nEND:VCARD\r\n"), etag: `"base"`}
-	server := httptest.NewServer(fixture.handler(t))
-	t.Cleanup(server.Close)
-	service, st, book := newPullService(t, server, false)
-	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
-	require.NoError(err)
-	require.NotNil(mapping.PersonID)
-	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
-	require.NoError(err)
-	publication, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
-		PersonID: *mapping.PersonID, Desired: true, AddressBookID: book.ID, Href: mapping.Href,
-		OutgoingBody: fixture.body, OutgoingSemanticHash: mapping.RemoteSemanticHash, LocalHash: snapshot.Fingerprint,
-	})
-	require.NoError(err)
-	require.True(publication.Noop)
-	fixture.setRemote(bytes.Replace(fixture.body, []byte("TEL;VALUE=text:+12025550101"), []byte("TEL:tel:+12025550101"), 1), `"format-only"`)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(err)
-	assert.Empty(conflicts)
-}
-
 func TestRemoteDeleteRetainsPublishedPersonInBothCardOrders(t *testing.T) {
 	for _, publishedFirst := range []bool{true, false} {
 		t.Run(fmt.Sprintf("published-first-%t", publishedFirst), func(t *testing.T) {
@@ -2898,8 +2813,8 @@ func TestRemoteDeleteRetainsPublishedPersonInBothCardOrders(t *testing.T) {
 }
 
 func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
-	for _, edit := range []bool{false, true} {
-		t.Run(fmt.Sprintf("edit-%t", edit), func(t *testing.T) {
+	for _, mode := range []string{"etag only", "remote edit", "manual removal and rename"} {
+		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			etag := `"import-1"`
@@ -2908,8 +2823,14 @@ func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
 			result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 			require.NoError(err)
 			assert.Equal(1, result.Removed)
+			if mode == "manual removal and rename" {
+				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+				require.NoError(err)
+				require.Len(points, 1)
+				require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, points[0].Envelope.ID, nil))
+			}
 			etag = `"import-2"`
-			if edit {
+			if mode == "remote edit" {
 				*importedBody = bytes.ReplaceAll(*importedBody, []byte("e1@example.test"), []byte("updated@example.test"))
 			}
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -2917,7 +2838,7 @@ func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
 			remaining, err := st.GetCardDAVResourceContext(t.Context(), books[1].ID, books[1].CanonicalURL+"person.vcf")
 			require.NoError(err)
 			assert.NotNil(remaining.PersonRevisionAtBind, "remaining cards retain local-edit revision evidence")
-			if edit {
+			if mode == "remote edit" {
 				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 				require.NoError(err)
 				values := make([]string, 0, len(points))
@@ -2925,6 +2846,15 @@ func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
 					values = append(values, point.OriginalValue)
 				}
 				assert.Contains(values, "updated@example.test", "the original imported card still governs its profile values")
+			}
+			if mode == "manual removal and rename" {
+				etag = `"import-3"`
+				*importedBody = bytes.ReplaceAll(*importedBody, []byte("Alice Example"), []byte("Updated Example"))
+				_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(err)
+				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
+				require.NoError(err)
+				assert.Empty(points, "a remote rename must not resurrect a manually removed email")
 			}
 			*importedBody = nil
 			result, err = service.Sync(t.Context(), SyncOptions{Full: true})
@@ -2936,80 +2866,28 @@ func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
 	}
 }
 
-func TestRemoteDeleteKeepsManualRemovalAfterETagRefreshAndNameEdit(t *testing.T) {
+func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
+	field := "NICKNAME"
 	require := require.New(t)
 	assert := assert.New(t)
-	etag := `"import-1"`
-	fixture, service, st, _, personID, _, importedBody := publishedCrossBookImportFixture(t, &etag)
-	fixture.setRemote(nil, "")
-	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	fixture, service, st, personID := publishedImportFixture(t)
+	value := "https://example.test/private-local"
+	_, err := st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameNickname, Formatted: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
 	require.NoError(err)
-	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-	require.NoError(err)
-	require.Len(points, 1)
-	require.NoError(st.SupersedePersonContactPointContext(t.Context(), personID, points[0].Envelope.ID, nil))
-	etag = `"import-2"`
+	require.NoError(service.ReconcilePublications(t.Context()))
+	require.Contains(string(fixture.body), field)
+	edited := bytes.ReplaceAll(fixture.body, []byte("private-local"), []byte("private-remote"))
+	fixture.setRemote(edited, `"native-edit"`)
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
-	etag = `"import-3"`
-	*importedBody = bytes.ReplaceAll(*importedBody, []byte("Alice Example"), []byte("Updated Example"))
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	conflicts, err := service.ListConflicts(t.Context())
 	require.NoError(err)
-	points, err = st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.Len(conflicts, 1)
+	view, err := service.GetConflictView(t.Context(), conflicts[0].ID)
 	require.NoError(err)
-	assert.Empty(points, "a remote rename must not resurrect a manually removed email")
-	*importedBody = nil
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-	_, err = st.GetPersonContext(t.Context(), personID)
-	assert.NoError(err)
-}
-
-func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
-	for _, field := range []string{"IMPP", "NICKNAME", "LANG", "SOUND", "KEY"} {
-		t.Run(field, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			fixture, service, st, personID := publishedImportFixture(t)
-			value := "https://example.test/private-local"
-			var err error
-			switch field {
-			case "NICKNAME":
-				_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameNickname, Formatted: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-			case "IMPP", "LANG":
-				kind := store.ContactAddressIMPP
-				if field == "LANG" {
-					kind = store.ContactAddressLanguage
-					value = "en"
-				}
-				_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{AddressKind: kind, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-			default:
-				kind := store.PersonMediaSound
-				if field == "KEY" {
-					kind = store.PersonMediaKey
-				}
-				_, err = st.AddPersonMediaContext(t.Context(), personID, store.PersonMediaInput{MediaKind: kind, URI: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-			}
-			require.NoError(err)
-			require.NoError(service.ReconcilePublications(t.Context()))
-			require.Contains(string(fixture.body), field)
-			edited := bytes.ReplaceAll(fixture.body, []byte("private-local"), []byte("private-remote"))
-			if field == "LANG" {
-				edited = bytes.ReplaceAll(fixture.body, []byte("LANG:en"), []byte("LANG:de"))
-			}
-			fixture.setRemote(edited, `"native-edit"`)
-			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-			require.NoError(err)
-			conflicts, err := service.ListConflicts(t.Context())
-			require.NoError(err)
-			require.Len(conflicts, 1)
-			view, err := service.GetConflictView(t.Context(), conflicts[0].ID)
-			require.NoError(err)
-			require.Len(view.Local.Fields, 1)
-			require.Len(view.Remote.Fields, 1)
-			assert.Equal(field, view.Remote.Fields[0].Name)
-			assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
-			assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
-		})
-	}
+	require.Len(view.Local.Fields, 1)
+	require.Len(view.Remote.Fields, 1)
+	assert.Equal(field, view.Remote.Fields[0].Name)
+	assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
+	assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
 }

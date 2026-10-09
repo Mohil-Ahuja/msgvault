@@ -97,24 +97,6 @@ func TestProjectConflictContactShowsLabelsAndProfileFields(t *testing.T) {
 	assert.NotEqual(got.Fields, remote.Fields)
 }
 
-func TestProjectConflictHiddenDifferencesIdentifyPrivateFields(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-
-	localBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\nNOTE:private-local-note\r\nRELATED:private-local-target\r\nEND:VCARD\r\n")
-	remoteBody := []byte(strings.ReplaceAll(strings.ReplaceAll(string(localBody), "private-local-note", "private-remote-note"), "private-local-target", "private-remote-target"))
-	local, remote := projectConflictComparison(localBody, remoteBody, false, false)
-	require.Len(local.Fields, 2)
-	require.Len(remote.Fields, 2)
-	assert.Equal("NOTE", remote.Fields[0].Name)
-	assert.Equal("RELATED", remote.Fields[1].Name)
-	assert.NotEqual(local.Fields[0].Labels, remote.Fields[0].Labels)
-	encoded, err := json.Marshal([]ContactSummary{local, remote})
-	require.NoError(err)
-	assert.NotContains(string(encoded), "private-local")
-	assert.NotContains(string(encoded), "private-remote")
-}
-
 func TestProjectConflictStructuredComponentsPreservePositionsAndEscapes(t *testing.T) {
 	for _, tc := range []struct{ name, version, property, want string }{
 		{"street", "4.0", "ADR:;;Example;;;;", `Street: "Example"`},
@@ -140,7 +122,7 @@ func TestProjectConflictStructuredComponentsPreservePositionsAndEscapes(t *testi
 }
 
 func TestProjectConflictComparisonMarksHiddenAndBoundedDifferences(t *testing.T) {
-	for _, name := range []string{"IMPP", "NICKNAME", "LANG", "SOUND", "KEY", "X-SECRET-NAME"} {
+	for _, name := range []string{"IMPP", "NICKNAME", "LANG", "SOUND", "KEY", "NOTE", "RELATED", "X-SECRET-NAME"} {
 		t.Run(name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -150,6 +132,9 @@ func TestProjectConflictComparisonMarksHiddenAndBoundedDifferences(t *testing.T)
 			require.Len(local.Fields, 1)
 			require.Len(remote.Fields, 1)
 			assert.Equal("Contents hidden", remote.Fields[0].Value)
+			if name != "X-SECRET-NAME" {
+				assert.Equal(name, remote.Fields[0].Name)
+			}
 			assert.NotEqual(local.Fields[0].Labels, remote.Fields[0].Labels)
 			encoded, err := json.Marshal([]ContactSummary{local, remote})
 			require.NoError(err)

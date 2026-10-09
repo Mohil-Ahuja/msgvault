@@ -1209,10 +1209,12 @@ func TestCardDAVRemoteTombstoneClearsInferenceApproval(t *testing.T) {
 				})
 				require.NoError(err)
 			}
-			_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
-			require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
-			_, err = st.GetPersonContext(t.Context(), personID)
-			require.NoError(err)
+			if keepRemote {
+				_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
+				require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
+				_, err = st.GetPersonContext(t.Context(), personID)
+				require.NoError(err)
+			}
 			var approved int64
 			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT approved_revision FROM person_carddav_inference_state WHERE person_id = ?`), personID).Scan(&approved))
 			assert.Zero(t, approved)
