@@ -1,16 +1,18 @@
 package carddav
 
 import (
+	"bytes"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestQueuedConflictPreviewRejectsPersonReboundByMerge(t *testing.T) {
@@ -221,6 +223,47 @@ func TestLegacyNonWriteConflictRecoveryDoesNotEnrollPublication(t *testing.T) {
 	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 	assert.Equal(puts, fixture.puts)
+}
+
+func TestMetadataRefreshDoesNotAcknowledgePendingInference(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture, service, st, personID := publishedImportFixture(t)
+	books, err := st.ListCardDAVAddressBooksContext(t.Context(), store.AllCardDAVAccounts)
+	require.NoError(err)
+	require.Len(books, 1)
+	mapping, err := st.GetCardDAVResourceForPersonContext(t.Context(), books[0].ID, personID)
+	require.NoError(err)
+	appendInferenceReviewNote(t, st, personID, "Pending inferred note")
+	fixture.setRemote(fixture.body, `"metadata-refresh"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	refreshed, err := st.GetCardDAVResourceForPersonContext(t.Context(), books[0].ID, personID)
+	require.NoError(err)
+	assert.Equal(mapping.LocalHash, refreshed.LocalHash)
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1), `"email-edit"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(err)
+	require.Len(conflicts, 1)
+	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	accepted, err := st.GetCardDAVResourceForPersonContext(t.Context(), books[0].ID, personID)
+	require.NoError(err)
+	assert.Equal(snapshot.Fingerprint, accepted.LocalHash)
+	puts := fixture.puts
+	preview, err := service.PreviewPublication(t.Context(), personID)
+	require.NoError(err)
+	require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
+	assert.Equal(puts+1, fixture.puts)
+	assert.Contains(string(fixture.lastPutBody), "NOTE:Pending inferred note")
+	assert.Contains(string(fixture.lastPutBody), "e2b@example.test")
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	assert.Equal(puts+1, fixture.puts)
 }
 
 func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {

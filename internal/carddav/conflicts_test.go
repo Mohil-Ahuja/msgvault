@@ -2311,8 +2311,9 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 }
 
 func TestKeepRemoteRejectsAndRefreshesAfterLocalEmploymentEdit(t *testing.T) {
-	for _, tombstone := range []bool{false, true} {
-		t.Run(fmt.Sprintf("remote-tombstone-%t", tombstone), func(t *testing.T) {
+	for _, change := range []string{"title", "tombstone", "organization"} {
+		t.Run(change, func(t *testing.T) {
+			tombstone := change == "tombstone"
 			require := require.New(t)
 			assert := assert.New(t)
 			fixture, service, st, personID := publishedImportFixture(t)
@@ -2338,8 +2339,13 @@ func TestKeepRemoteRejectsAndRefreshesAfterLocalEmploymentEdit(t *testing.T) {
 			conflicts, err := service.ListConflicts(t.Context())
 			require.NoError(err)
 			require.Len(conflicts, 1)
-			input.Title = new("New local title")
-			employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
+			if change == "organization" {
+				_, err = st.ReplaceOrganizationContext(t.Context(), organization.ID, organization.Revision,
+					store.OrganizationInput{Name: "Changed Company", Kind: store.OrganizationKindCompany}, false)
+			} else {
+				input.Title = new("New local title")
+				employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
+			}
 			require.NoError(err)
 			source, err := st.LoadCardDAVConflictReviewSourceContext(t.Context(), conflicts[0].ID)
 			require.NoError(err)
@@ -2366,11 +2372,19 @@ func TestKeepRemoteRejectsAndRefreshesAfterLocalEmploymentEdit(t *testing.T) {
 			if !tombstone {
 				labels = []string{"Job fields differ from remote"}
 			}
-			assert.Contains(view.Local.Fields, ContactField{Name: "TITLE", Value: "New local title", Labels: labels})
+			assert.Contains(view.Local.Fields, ContactField{Name: "TITLE", Value: *input.Title, Labels: labels})
+			if change == "organization" {
+				assert.True(slices.ContainsFunc(view.Local.Fields, func(field ContactField) bool {
+					return field.Name == "ORG" && strings.Contains(field.Value, "Changed Company")
+				}))
+			}
 			assert.Equal(tombstone, view.Remote.State == ConflictSideDeleted)
 			require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepLocal))
 			assert.Equal(puts+1, fixture.puts)
-			assert.Contains(string(fixture.lastPutBody), "TITLE:New local title")
+			assert.Contains(string(fixture.lastPutBody), "TITLE:"+*input.Title)
+			if change == "organization" {
+				assert.Contains(string(fixture.lastPutBody), "ORG:Changed Company")
+			}
 			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
 			require.NoError(err)
 			assert.Equal(store.CardDAVConflictResolved, resolved.Status)
@@ -2988,6 +3002,53 @@ func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
 	assert.Equal(field, view.Remote.Fields[0].Name)
 	assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
 	assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
+}
+
+func TestEncodedSecondaryNamesSurviveImportAndPublication(t *testing.T) {
+	for _, tc := range []struct{ name, version, property, want string }{
+		{"UTF-8 quoted printable", "3.0", "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=UTF-8:Secondary=20Name", "Secondary Name"},
+		{"Latin-1 quoted printable", "3.0", "FN;ENCODING=QUOTED-PRINTABLE;CHARSET=ISO-8859-1:Andr=E9 Example", "André Example"},
+		{"v2.1 literal backslashes", "2.1", `FN:Secondary\nName`, `Secondary\nName`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			body := []byte("BEGIN:VCARD\r\nVERSION:" + tc.version + "\r\nUID:person\r\nFN:Primary Name\r\n" + tc.property + "\r\nEMAIL:person@example.test\r\nEND:VCARD\r\n")
+			fixture := &conflictMutationServer{body: body, etag: `"encoded"`}
+			server := httptest.NewServer(fixture.handler(t))
+			t.Cleanup(server.Close)
+			service, st, book := newPullService(t, server, false)
+			_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+			require.NoError(err)
+			require.NotNil(mapping.PersonID)
+			names, err := st.ListPersonNamesContext(t.Context(), *mapping.PersonID, true)
+			require.NoError(err)
+			require.Len(names, 2)
+			assert.ElementsMatch([]*string{new("Primary Name"), new(tc.want)}, []*string{names[0].Formatted, names[1].Formatted})
+			envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), mapping.Href)
+			require.NoError(err)
+			for _, name := range names {
+				assert.True(slices.ContainsFunc(envelope.NativeMappings, func(owner vcard.NativeMapping) bool {
+					return owner.Table == "person_names" && owner.RowID == name.Envelope.ID && owner.Identity.PropID == name.Envelope.VCard.PropID
+				}))
+			}
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET supported_vcard_versions = '["4.0"]' WHERE id = ?`), book.ID)
+			require.NoError(err)
+			require.NoError(service.PublishPerson(t.Context(), *mapping.PersonID))
+			_, err = st.AddPersonContactPointContext(t.Context(), *mapping.PersonID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressEmail, OriginalValue: "unrelated@example.test",
+				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+			})
+			require.NoError(err)
+			require.NoError(service.ReconcilePublications(t.Context()))
+			assert.Contains(string(fixture.lastPutBody), "FN:Primary Name\r\n")
+			assert.Contains(string(fixture.lastPutBody), "FN:"+vcard.EscapeText(tc.want)+"\r\n")
+			assert.NotContains(string(fixture.lastPutBody), "=20")
+			assert.Contains(string(fixture.lastPutBody), "unrelated@example.test")
+		})
+	}
 }
 
 func TestRemoteEmailEditKeepsV3DerivedNameFollowingStructuredName(t *testing.T) {

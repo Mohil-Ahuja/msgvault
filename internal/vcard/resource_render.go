@@ -37,6 +37,11 @@ type propertyRender struct {
 	mediaType    string
 }
 
+// NormalizePropertyForVersion applies the renderer's version conversion to one property.
+func NormalizePropertyForVersion(property Property, sourceVersion, targetVersion Version) (Property, bool, error) {
+	return normalizePropertyForVersion(property, sourceVersion, targetVersion)
+}
+
 // normalizePropertyForVersion converts one property to the target version.
 // It reports omit=true when the vCard 3 compatibility view has no spelling for
 // the occurrence; the canonical vCard 4 render never omits.

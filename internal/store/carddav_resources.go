@@ -199,7 +199,7 @@ func (s *Store) ApplyCardDAVSyncPlanContext(
 				continue
 			}
 			created, changed, err := s.applyCardDAVResourceTx(
-				ctx, tx, book, input, plan.CompletesFullReconcile,
+				ctx, tx, book, input, plan.CompletesFullReconcile, false,
 			)
 			if err != nil {
 				return err
@@ -755,7 +755,7 @@ func (s *Store) cardDAVPublishedPersonUnchangedLocallyTx(
 
 func (s *Store) applyCardDAVResourceTx(
 	ctx context.Context, tx *loggedTx, book CardDAVAddressBook,
-	input CardDAVRemoteResource, reconcileBinding bool,
+	input CardDAVRemoteResource, reconcileBinding, projectionAlreadyRebased bool,
 ) (bool, bool, error) {
 	current, err := s.findCardDAVResourceTx(ctx, tx, book.ID, input.Href)
 	created := errors.Is(err, ErrCardDAVResourceNotFound)
@@ -855,7 +855,10 @@ func (s *Store) applyCardDAVResourceTx(
 		if err != nil {
 			return false, false, fmt.Errorf("hash CardDAV-bound local person: %w", err)
 		}
-		localHash = snapshot.Fingerprint
+		if created || current.PersonID == nil || projectionRebased || projectionAlreadyRebased || input.EquivalentLocalHash == snapshot.Fingerprint {
+			// A server metadata refresh cannot acknowledge profile changes that have not reached the card.
+			localHash = snapshot.Fingerprint
+		}
 	}
 
 	var resourceID int64
@@ -1287,7 +1290,11 @@ func (s *Store) addCardDAVImportedProjectionTx(
 		if !strings.EqualFold(occurrence.Property.Name, "FN") || skip[occurrence.Identity.Key()] {
 			continue
 		}
-		value, err := vcard.UnescapeText(occurrence.Property.RawValue)
+		property, _, err := vcard.NormalizePropertyForVersion(occurrence.Property, resource.RenderMetadata.StoredVersion, vcard.Version40)
+		if err != nil {
+			return err
+		}
+		value, err := vcard.UnescapeText(property.RawValue)
 		if err != nil {
 			return err
 		}
@@ -1295,6 +1302,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 			continue
 		}
 		envelope := baseEnvelope
+		properties[occurrence.Identity.Key()] = property
 		envelope.VCard = VCardIdentity{
 			Property: "FN", Group: trimmedOrNil(new(occurrence.Identity.Group)), PropID: occurrence.Identity.PropID,
 			PID: occurrence.Identity.PID, AltID: occurrence.Identity.AltID,
@@ -1307,7 +1315,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 		}
 		representable := true
 		seen := make(map[string]bool)
-		for _, parameter := range occurrence.Property.Parameters {
+		for _, parameter := range property.Parameters {
 			if seen[parameter.Name] || len(parameter.Values) == 0 {
 				representable = false
 				break
@@ -1465,7 +1473,11 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	if envelope != nil {
 		for _, occurrence := range envelope.PropertyTree {
 			if strings.EqualFold(occurrence.Property.Name, "FN") {
-				value, err := vcard.UnescapeText(occurrence.Property.RawValue)
+				property, _, err := vcard.NormalizePropertyForVersion(occurrence.Property, envelope.RenderMetadata.StoredVersion, vcard.Version40)
+				if err != nil {
+					return false, fmt.Errorf("convert prior CardDAV display label: %w", err)
+				}
+				value, err := vcard.UnescapeText(property.RawValue)
 				if err != nil {
 					return false, fmt.Errorf("decode prior CardDAV display label: %w", err)
 				}

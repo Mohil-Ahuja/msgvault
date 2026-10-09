@@ -1252,8 +1252,16 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 	if s.cardDAVConflictResolveSnapshotHook != nil {
 		s.cardDAVConflictResolveSnapshotHook()
 	}
+	return retryBusyWrite(ctx, s, "resolve CardDAV remote conflict", func() (*CardDAVConflict, error) {
+		return s.resolveCardDAVConflictRemoteAttempt(ctx, input, identity)
+	})
+}
+
+func (s *Store) resolveCardDAVConflictRemoteAttempt(
+	ctx context.Context, input CardDAVConflictRemoteResolution, identity cardDAVConflictIdentity,
+) (*CardDAVConflict, error) {
 	var resolved *CardDAVConflict
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		book, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID)
 		if err != nil {
 			return err
@@ -1345,7 +1353,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 					return err
 				}
 			}
-			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false)
+			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, mapping.PersonID != nil)
 			if err != nil {
 				return err
 			}

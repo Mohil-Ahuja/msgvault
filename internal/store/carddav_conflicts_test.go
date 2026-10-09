@@ -3,12 +3,15 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vcard"
+	"go.kenn.io/msgvault/internal/vcardmap"
 )
 
 func seededCardDAVConflictMapping(
@@ -650,6 +653,80 @@ func parseCardDAVRemoteForStoreTest(href, etag string, body []byte) store.CardDA
 		Href: href, RemoteUID: "remote-alice", RemoteETag: etag,
 		RemoteBody: body, SemanticHash: "retained-remote-hash", DisplayName: "Remote",
 	}
+}
+
+func TestCardDAVKeepRemoteEmploymentRetriesPostgreSQLDeadlock(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, _, book := newCardDAVResourceStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks are required for the employment deadlock regression")
+	}
+	personID, remote := settleCardDAVTestPublication(t, st, book, "employment-deadlock")
+	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+	require.NoError(err)
+	employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"), Role: new("Developer"),
+		IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	sibling, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Source: store.ProvenanceUser})
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	envelope, err := vcard.ParseResourceEnvelope(remote.RemoteBody)
+	require.NoError(err)
+	envelope.SourceRef, envelope.SourceResourceUID = fmt.Sprintf("carddav:%d", book.ID), remote.Href
+	envelope.CanonicalPersonUID = "employment-deadlock"
+	envelope, err = vcardmap.ProjectPersonEnvelope(*snapshot, envelope)
+	require.NoError(err)
+	envelope, err = envelope.PrepareWireRender(vcard.Version40)
+	require.NoError(err)
+	metadata, err := vcard.MarshalResourceMetadata(envelope)
+	require.NoError(err)
+	remote.RemoteBody, remote.SemanticHash = envelope.StoredBody, "employment-baseline"
+	pending, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: personID, Desired: true, AddressBookID: book.ID, Href: remote.Href,
+		OutgoingBody: remote.RemoteBody, OutgoingSemanticHash: remote.SemanticHash, LocalHash: snapshot.Fingerprint,
+		OutgoingEnvelopeMetadata: metadata,
+	})
+	require.NoError(err)
+	require.NoError(st.CommitCardDAVPublicationContext(t.Context(), store.CardDAVCanonicalMutation{Publication: *pending, Remote: remote}))
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, remote.Href)
+	require.NoError(err)
+	capture := conflictCapture(mapping)
+	capture.LocalBody = remote.RemoteBody
+	capture.RemoteBody = bytes.Replace(remote.RemoteBody, []byte("TITLE:Engineer"), []byte("TITLE:Accepted title"), 1)
+	capture.RemoteBody = bytes.Replace(capture.RemoteBody, []byte("ROLE:Developer"), []byte("ROLE:Accepted role"), 1)
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
+	require.NoError(err)
+	retained := parseCardDAVRemoteForStoreTest(mapping.Href, capture.RemoteETag, capture.RemoteBody)
+	var pinsBefore int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM person_fact_pin_events WHERE person_id = ?`), personID).Scan(&pinsBefore))
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	t.Cleanup(cancel)
+	err = forcePostgreSQLDeadlock(ctx, t, st,
+		postgreSQLRowLock{table: "organizations", id: organization.ID}, postgreSQLRowLock{table: "persons", id: personID},
+		func(ctx context.Context) error {
+			_, err := st.ResolveCardDAVConflictRemoteContext(ctx, store.CardDAVConflictRemoteResolution{
+				ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, Remote: retained,
+			})
+			return err
+		})
+	require.NoError(err)
+	got, err := st.GetEmploymentContext(t.Context(), employment.ID)
+	require.NoError(err)
+	want := *employment
+	want.IsCurrent, want.IsPrimary = false, false
+	want.Revision++
+	want.UpdatedAt = got.UpdatedAt
+	assert.Equal(want, *got)
+	kept, err := st.GetEmploymentContext(t.Context(), sibling.ID)
+	require.NoError(err)
+	assert.Equal(*sibling, *kept)
+	var pinsAfter int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM person_fact_pin_events WHERE person_id = ?`), personID).Scan(&pinsAfter))
+	assert.Equal(pinsBefore+1, pinsAfter)
 }
 
 func TestCardDAVKeepRemoteAndMergeRevalidatePersonBinding(t *testing.T) {
