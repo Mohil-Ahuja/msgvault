@@ -2967,11 +2967,27 @@ func TestRemoteDeleteRetainsPersonAfterRemainingImportChanges(t *testing.T) {
 				points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 				require.NoError(err)
 				assert.Empty(points, "a remote rename must not resurrect a manually removed email")
+				conflicts, err := service.ListConflicts(t.Context())
+				require.NoError(err)
+				require.Len(conflicts, 1)
 			}
 			*importedBody = nil
 			result, err = service.Sync(t.Context(), SyncOptions{Full: true})
 			require.NoError(err)
-			assert.Equal(1, result.Removed)
+			if mode == "manual removal and rename" {
+				assert.Zero(result.Removed)
+				conflicts, err := service.ListConflicts(t.Context())
+				require.NoError(err)
+				require.Len(conflicts, 1)
+				view, err := service.GetConflictView(t.Context(), conflicts[0].ID)
+				require.NoError(err)
+				assert.Equal(ConflictSideDeleted, view.Remote.State)
+				require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+				_, err = st.GetCardDAVResourceContext(t.Context(), books[1].ID, remaining.Href)
+				require.ErrorIs(err, store.ErrCardDAVResourceNotFound)
+			} else {
+				assert.Equal(1, result.Removed)
+			}
 			_, err = st.GetPersonContext(t.Context(), personID)
 			assert.NoError(err, "cancelled publication retains the person after the final imported card is removed")
 		})
