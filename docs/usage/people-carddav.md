@@ -424,6 +424,9 @@ msgvault carddav conflicts resolve 18 keep_remote
 `keep_local` applies the local choice to the remote card. `keep_remote` accepts
 the remote choice locally. Either choice may represent a deletion. If the
 remote state changed again, reload the conflict and review the new comparison.
+If accepting a remote job-title edit conflicts with an existing untitled job,
+that job stays unchanged and the reviewed job keeps its original details in
+history.
 An unresolved conflict prevents conflicting publication work from proceeding.
 
 A saved person with an active CardDAV publication cannot be merged with another

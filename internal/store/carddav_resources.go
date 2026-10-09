@@ -1597,6 +1597,12 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
 	if employment.PersonID != personID {
 		return nil
 	}
+	if !employment.IsCurrent && !slices.ContainsFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
+		return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID
+	}) {
+		// Released history keeps its original fields when another occurrence was also edited.
+		return nil
+	}
 	if err := s.claimEmploymentPeopleTx(ctx, tx, personID); err != nil {
 		return err
 	}
@@ -1608,6 +1614,11 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
 		IsCurrent: &employment.IsCurrent, IsPrimary: &employment.IsPrimary,
 		Source: employment.Source, SourceRef: employment.SourceRef, Confidence: employment.Confidence,
 	}
+	releaseMappings := func() {
+		envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
+			return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID
+		})
+	}
 	switch mapping.Field {
 	case "title":
 		update.Title = nil
@@ -1616,17 +1627,18 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldTx(
 	case "organization_id":
 		// A required organization stays in history after its card projection is displaced.
 		update.IsPrimary = new(false)
-		envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
-			return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID
-		})
-	}
-	if update.Title == nil && employment.IsCurrent {
-		if _, err := tx.ExecContext(ctx, `UPDATE employments SET is_current = FALSE, is_primary = FALSE, revision = revision + 1, updated_at = `+s.dialect.Now()+`
-			WHERE person_id = ? AND organization_id = ? AND id <> ? AND is_current = TRUE AND title_normalized = ''`, personID, employment.OrganizationID, employment.ID); err != nil {
-			return fmt.Errorf("retain displaced untitled employment history: %w", err)
-		}
+		releaseMappings()
 	}
 	_, err = s.reviseEmploymentTx(ctx, tx, mapping.RowID, employment.Revision, update)
+	if mapping.Field == "title" && employment.IsCurrent && errors.Is(err, ErrEmploymentDuplicateActive) {
+		// Preserve the reviewed job as history without changing the unrelated current job.
+		update.Title = employment.Title
+		update.IsCurrent, update.IsPrimary = new(false), new(false)
+		_, err = s.reviseEmploymentTx(ctx, tx, mapping.RowID, employment.Revision, update)
+		if err == nil {
+			releaseMappings()
+		}
+	}
 	if err != nil {
 		return err
 	}

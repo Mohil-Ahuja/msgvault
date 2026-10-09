@@ -2335,12 +2335,14 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 	for _, tc := range []struct {
 		name, field  string
 		sibling      bool
+		editRole     bool
 		siblingTitle *string
 	}{
 		{name: "TITLE", field: "TITLE"},
 		{name: "ROLE", field: "ROLE"},
 		{name: "ORG", field: "ORG"},
 		{name: "TITLE with untitled sibling", field: "TITLE", sibling: true},
+		{name: "TITLE and ROLE with untitled sibling", field: "TITLE", sibling: true, editRole: true},
 		{name: "TITLE with titled sibling", field: "TITLE", sibling: true, siblingTitle: new("Unchanged title")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2367,7 +2369,11 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 			after := field + ":Accepted remote value"
 			require.Contains(string(fixture.body), before)
 			puts := fixture.puts
-			fixture.setRemote(bytes.Replace(fixture.body, []byte(before), []byte(after), 1), `"employment-edit"`)
+			remote := bytes.Replace(fixture.body, []byte(before), []byte(after), 1)
+			if tc.editRole {
+				remote = bytes.Replace(remote, []byte("ROLE:Developer"), []byte("ROLE:Accepted remote role"), 1)
+			}
+			fixture.setRemote(remote, `"employment-edit"`)
 			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
 			require.NoError(err)
 			conflicts, err := service.ListConflicts(t.Context())
@@ -2379,7 +2385,11 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 			want := *employment
 			switch field {
 			case "TITLE":
-				want.Title = nil
+				if tc.sibling && tc.siblingTitle == nil {
+					want.IsCurrent, want.IsPrimary = false, false
+				} else {
+					want.Title = nil
+				}
 			case "ROLE":
 				want.Role = nil
 			case "ORG":
@@ -2404,10 +2414,10 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 			if sibling != nil {
 				kept, err := st.GetEmploymentContext(t.Context(), sibling.ID)
 				require.NoError(err)
-				assert.Equal(tc.siblingTitle, kept.Title)
-				if tc.siblingTitle == nil {
-					assert.False(kept.IsCurrent)
-				}
+				assert.Equal(*sibling, *kept)
+				current, err := st.ListEmploymentsContext(t.Context(), store.EmploymentFilter{PersonID: personID, CurrentOnly: true})
+				require.NoError(err)
+				assert.Contains(current, *sibling)
 			}
 			assert.Equal(puts+1, fixture.puts)
 			body := string(fixture.lastPutBody)
@@ -2416,6 +2426,12 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 			assert.Equal(1, strings.Count(body, field+":"))
 			assert.Contains(body, "unrelated@example.test")
 			for other, value := range map[string]string{"TITLE": "TITLE:Engineer", "ROLE": "ROLE:Developer", "ORG": "ORG:Example Company;Platform"} {
+				if other == "ROLE" && tc.editRole {
+					assert.Contains(body, "ROLE:Accepted remote role")
+					assert.NotContains(body, value)
+					assert.Equal(1, strings.Count(body, "ROLE:"))
+					continue
+				}
 				if other != field {
 					assert.Contains(body, value)
 				}
@@ -2706,9 +2722,11 @@ func TestKeepRemoteDecisionSurvivesAutomaticProfileUpdate(t *testing.T) {
 			_, err := st.SetPersonTrackingContext(t.Context(), personID, true)
 			require.NoError(err)
 			slug, submitted, before := store.AttributeSlugNotes, `"Original inferred note"`, "NOTE:Original inferred note"
+			var organizationID int64
 			if field == "TITLE" {
 				organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
 				require.NoError(err)
+				organizationID = organization.ID
 				slug = "employment"
 				submitted = fmt.Sprintf(`{"organization":{"id":%d,"name":"Example Company"},"title":"Engineer","start_date":{"year":2020}}`, organization.ID)
 				before = "TITLE:Engineer"
@@ -2717,6 +2735,13 @@ func TestKeepRemoteDecisionSurvivesAutomaticProfileUpdate(t *testing.T) {
 			result, err := st.ApplyPersonFactGenerationContext(t.Context(), seed, nil)
 			require.NoError(err)
 			require.NotEmpty(result.Projections)
+			var sibling *store.Employment
+			if field == "TITLE" {
+				sibling, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{
+					PersonID: personID, OrganizationID: organizationID, Source: store.ProvenanceUser,
+				})
+				require.NoError(err)
+			}
 			preview, err := service.PreviewPublication(t.Context(), personID)
 			require.NoError(err)
 			require.NoError(service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
@@ -2736,9 +2761,23 @@ func TestKeepRemoteDecisionSurvivesAutomaticProfileUpdate(t *testing.T) {
 			for _, decision := range result.Decisions {
 				assert.Equal(personfacts.ReasonPinRetained, decision.Reason)
 			}
+			if sibling != nil {
+				_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+					AddressKind: store.ContactAddressEmail, OriginalValue: "unrelated@example.test",
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+				})
+				require.NoError(err)
+			}
 			require.NoError(service.ReconcilePublications(t.Context()))
 			assert.Contains(string(fixture.body), after)
 			assert.NotContains(string(fixture.body), before)
+			if sibling != nil {
+				kept, err := st.GetEmploymentContext(t.Context(), sibling.ID)
+				require.NoError(err)
+				assert.Equal(*sibling, *kept)
+				assert.Contains(string(fixture.lastPutBody), "ORG:Example Company")
+				assert.Contains(string(fixture.lastPutBody), "unrelated@example.test")
+			}
 		})
 	}
 }
