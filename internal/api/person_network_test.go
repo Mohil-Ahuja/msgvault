@@ -18,7 +18,7 @@ func TestPersonNetworkRouteReturnsProjection(t *testing.T) {
 	srv, s := newPersonNetworkTestServer(t)
 	root := mustAPIPerson(t, s, "root@example.test", "Root")
 	peer := mustAPIPerson(t, s, "peer@example.test", "Peer")
-	_, err := s.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
+	edge, err := s.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
 		SourcePersonID: root.ID,
 		TargetPersonID: peer.ID,
 		TypeSlug:       "friend",
@@ -33,6 +33,15 @@ func TestPersonNetworkRouteReturnsProjection(t *testing.T) {
 	var body store.PersonNetwork
 	require.NoError(json.NewDecoder(got.Body).Decode(&body))
 	assert.Equal(t, root.ID, body.RootPersonID)
+	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`UPDATE person_relationships SET superseded_at = CURRENT_TIMESTAMP WHERE id = ?`), edge.ID)
+	require.NoError(err)
+	got = doRequest(t, srv.Router(), http.MethodGet,
+		fmt.Sprintf("/api/v1/people/%d/network?depth=1&include_ended=true", root.ID), nil, nil)
+	require.Equal(http.StatusOK, got.Code)
+	require.NoError(json.NewDecoder(got.Body).Decode(&body))
+	require.Len(body.Edges, 1)
+	assert.Equal(t, "friend", body.Edges[0].Label)
+	assert.NotNil(t, body.Edges[0].SupersededAt)
 }
 
 func newPersonNetworkTestServer(t *testing.T) (*Server, *store.Store) {

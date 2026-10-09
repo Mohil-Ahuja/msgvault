@@ -140,7 +140,7 @@
               {#if source && target}
                 <li class="connection">
                   <Button size="sm" label={source.label} ariaLabel={nodeActionLabel(source)} onclick={() => openNode(source)} />
-                  <span>{edge.label}</span>
+                  <span>{edge.label}{#if edge.superseded_at}{' · superseded'}{/if}</span>
                   <Button size="sm" label={target.label} ariaLabel={nodeActionLabel(target)} onclick={() => openNode(target)} />
                   <small>{edge.kind === 'relationship' ? 'Typed relationship' : 'Employment'}</small>
                 </li>
@@ -157,10 +157,10 @@
 
 <style>
   .person-network, header, .controls, .projection, .network-error, .connection-list, .hop-group, .hop-group > ul { display: grid; gap: var(--space-3); }
-  header { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  header { grid-template-columns: minmax(0, 1fr); align-items: start; }
   header p, h2, h3, p, ul { margin: 0; }
   header p, .empty, small { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .controls { grid-auto-flow: column; align-items: end; }
+  .controls { display: flex; flex-wrap: wrap; align-items: end; }
   .controls label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
   .projection { position: relative; min-height: 7rem; overflow: auto; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
   .projection:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
@@ -175,6 +175,6 @@
   .hop-group, .root-only { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .connection small { margin-left: auto; }
-  @media (max-width: 640px) { header { grid-template-columns: 1fr; } .controls { grid-auto-flow: row; justify-items: start; } }
+  @media (max-width: 640px) { header { grid-template-columns: 1fr; } .controls { align-items: start; } }
   @media (prefers-reduced-motion: reduce) { .projection { scroll-behavior: auto; } }
 </style>

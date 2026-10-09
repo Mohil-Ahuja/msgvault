@@ -11,6 +11,7 @@ export interface NetworkEdge {
   relationship_type_slug?: string;
   source_node_id: string;
   start_date?: string;
+  superseded_at?: string;
   target_node_id: string;
   [key: string]: unknown;
 }

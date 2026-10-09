@@ -6931,6 +6931,7 @@ type NetworkEdge struct {
 	RelationshipTypeSlug *string         `json:"relationship_type_slug,omitzero"`
 	SourceNodeID         string          `json:"source_node_id" validate:"required"`
 	StartDate            *string         `json:"start_date,omitzero"`
+	SupersededAt         *time.Time      `json:"superseded_at,omitempty"`
 	TargetNodeID         string          `json:"target_node_id" validate:"required"`
 }
 

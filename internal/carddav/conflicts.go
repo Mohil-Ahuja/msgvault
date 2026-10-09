@@ -331,6 +331,7 @@ func (s *Service) prepareMappingConflict(
 	if !remoteTombstone {
 		remoteHash, equivalentLocalHash, remoteBody = remote.SemanticHash, remote.EquivalentLocalHash, remote.RemoteBody
 	}
+	// Apply rechecks this decision atomically because the local profile can change after preparation.
 	needsConflict, err := s.store.CardDAVResourceNeedsConflictContext(ctx, book.ID, mapping.Href, remoteHash, equivalentLocalHash, remoteBody)
 	if err != nil {
 		return store.CardDAVConflictCapture{}, false, err

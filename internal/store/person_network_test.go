@@ -371,7 +371,12 @@ func TestGetPersonNetworkContextIncludesEndedRowsOnlyWhenRequested(t *testing.T)
 	for _, edge := range history.Edges {
 		labels = append(labels, edge.Label)
 	}
-	assert.Contains(labels, "friend · superseded")
+	assert.Contains(labels, "friend")
+	for _, edge := range history.Edges {
+		if edge.ID == fmt.Sprintf("relationship:%d", superseded.ID) {
+			assert.NotNil(edge.SupersededAt)
+		}
+	}
 	retained, err := f.Store.GetPersonRelationshipContext(t.Context(), superseded.ID)
 	require.NoError(err)
 	assert.Equal(store.RelationshipStatusActive, retained.Status)

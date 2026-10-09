@@ -225,8 +225,11 @@ msgvault person relationship list 7 --include-ended
 The same stored relationship appears from both people's perspectives, with the
 appropriate forward or reverse label. Dates accept `YYYY`, `YYYY-MM`, or
 `YYYY-MM-DD`. Use `person relationship end <relationship-id> <until-date>` to
-keep an ended relationship in history. `relationship-type create` adds your
-own types; symmetric types require identical forward and reverse labels.
+keep an ended relationship in history. Accepting a remote CardDAV relationship
+edit keeps the displaced relationship as superseded history; `--include-ended`
+includes both ended and superseded relationships. `relationship-type create`
+adds your own types; symmetric types require identical forward and reverse
+labels.
 
 ## Find a person by what you remember
 

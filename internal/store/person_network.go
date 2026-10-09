@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -48,14 +49,15 @@ type NetworkNode struct {
 
 // NetworkEdge identifies a declared relationship or employment connection.
 type NetworkEdge struct {
-	ID                   string  `json:"id"`
-	Kind                 string  `json:"kind" enum:"relationship,employment"`
-	SourceNodeID         string  `json:"source_node_id"`
-	TargetNodeID         string  `json:"target_node_id"`
-	RelationshipTypeSlug *string `json:"relationship_type_slug,omitzero" nullable:"false"`
-	Label                string  `json:"label"`
-	StartDate            *string `json:"start_date,omitzero" nullable:"false"`
-	EndDate              *string `json:"end_date,omitzero" nullable:"false"`
+	ID                   string     `json:"id"`
+	Kind                 string     `json:"kind" enum:"relationship,employment"`
+	SourceNodeID         string     `json:"source_node_id"`
+	TargetNodeID         string     `json:"target_node_id"`
+	RelationshipTypeSlug *string    `json:"relationship_type_slug,omitzero" nullable:"false"`
+	Label                string     `json:"label"`
+	StartDate            *string    `json:"start_date,omitzero" nullable:"false"`
+	EndDate              *string    `json:"end_date,omitzero" nullable:"false"`
+	SupersededAt         *time.Time `json:"superseded_at,omitzero" nullable:"false"`
 }
 
 // GetPersonNetworkContext returns a deterministic, breadth-first projection
@@ -390,7 +392,7 @@ func (s *Store) hydratePersonNetworkRelationships(
 		       relationship_type.slug,
 		       relationship_type.forward_label,
 		       relationship.start_year, relationship.start_month, relationship.start_day,
-		       relationship.end_year, relationship.end_month, relationship.end_day, relationship.superseded_at IS NOT NULL
+		       relationship.end_year, relationship.end_month, relationship.end_day, relationship.superseded_at
 		FROM selected_relationships selected
 		JOIN person_relationships relationship ON relationship.id = selected.id
 		JOIN relationship_types relationship_type ON relationship_type.id = relationship.relationship_type_id
@@ -409,16 +411,17 @@ func (s *Store) hydratePersonNetworkRelationships(
 			sourceLabel, targetLabel, slug, label string
 			startYear, startMonth, startDay       sql.NullInt64
 			endYear, endMonth, endDay             sql.NullInt64
-			superseded                            bool
+			supersededAt                          sql.NullTime
 		)
 		if err := rows.Scan(
 			&id, &sourceID, &sourceLabel, &targetID, &targetLabel, &slug, &label,
-			&startYear, &startMonth, &startDay, &endYear, &endMonth, &endDay, &superseded,
+			&startYear, &startMonth, &startDay, &endYear, &endMonth, &endDay, &supersededAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan person network relationship: %w", err)
 		}
-		if superseded {
-			label += " · superseded"
+		var superseded *time.Time
+		if supersededAt.Valid {
+			superseded = &supersededAt.Time
 		}
 		relationshipSlug := slug
 		hydrated[id] = personNetworkHydratedEdge{
@@ -429,6 +432,7 @@ func (s *Store) hydratePersonNetworkRelationships(
 				TargetNodeID:         personNetworkNodeID("person", targetID),
 				RelationshipTypeSlug: &relationshipSlug,
 				Label:                label,
+				SupersededAt:         superseded,
 				StartDate:            personNetworkDateFromColumns(startYear, startMonth, startDay),
 				EndDate:              personNetworkDateFromColumns(endYear, endMonth, endDay),
 			},

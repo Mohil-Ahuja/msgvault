@@ -279,10 +279,10 @@ name, a remote rename raises a conflict. Removing a plain email or phone value
 from the card hides it on the profile, even one msgvault learned from messages.
 Changing a profile-owned field msgvault can't import, such as a saved address,
 raises a conflict. A plain email or phone added in the address book joins the
-profile.
-Other fields added there, such as an address, stay on the card without reaching
-the profile. Deleting the contact in the address book turns publication off and
-keeps the profile.
+profile. Adding a labeled email or phone, such as `TEL;TYPE=cell`, raises a
+conflict. Other fields added there, such as an address, stay on the card without
+reaching the profile. Deleting the contact in the address book turns publication
+off and keeps the profile.
 
 The same actions are available from the CLI:
 

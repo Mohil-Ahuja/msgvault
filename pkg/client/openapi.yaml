@@ -7294,6 +7294,9 @@ components:
           type: string
         start_date:
           type: string
+        superseded_at:
+          format: date-time
+          type: string
         target_node_id:
           type: string
       required:

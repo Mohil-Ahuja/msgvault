@@ -106,7 +106,7 @@ describe('PersonNetwork', () => {
 
   it('groups every typed relationship and employment by hop and makes both entity kinds actionable', async () => {
     const fixture = connected();
-    fixture.edges[0]!.label = 'works with · superseded';
+    fixture.edges[0]!.superseded_at = '2026-02-01T00:00:00Z';
     const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(fixture)));
     const controller = new DirectoryEntityController(client, 7);
     const onOpenPerson = vi.fn();

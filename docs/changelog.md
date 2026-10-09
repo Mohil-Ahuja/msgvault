@@ -32,12 +32,12 @@ All notable changes to msgvault, grouped by release.
   carries one, raises a conflict. Imported labeled values accept remote value
   edits when their parameters stay the same. Changing a profile-owned field
   msgvault can't import, such as a saved address, raises a conflict. A plain email
-  or phone added in the address book joins the profile; other added fields, such
-  as an address, stay on the card without reaching the profile. Deleting a
-  published contact in the address book turns publication off and keeps the
-  person. API schema 3.9 adds conflict
-  comparison `fields` and `superseded_at` relationship history; archive schema 2
-  preserves that history and people retained after publication deletion.
+  or phone added in the address book joins the profile. Adding a labeled email
+  or phone raises a conflict. Other added fields, such as an address, stay on
+  the card without reaching the profile. Deleting a published contact in the
+  address book turns publication off and keeps the person. API schema 3.9 adds
+  conflict comparison `fields` and `superseded_at` relationship history; archive
+  schema 2 preserves that history and people retained after publication deletion.
 
 - `list-accounts` and `embeddings list` keep working while a sync, import, or
   embedding build runs. Accounts whose counts aren't ready yet show `pending`.

@@ -275,6 +275,7 @@ func (s *Store) prepareCardDAVPublicationTx(ctx context.Context, tx *loggedTx, p
 			if etag := strings.TrimSpace(resource.RemoteETag); etag == "" || etag == "*" {
 				return ErrCardDAVInvalidPlan
 			}
+			// An accepted remote rebase sets publication.LocalHash to acknowledge this profile revision.
 			if plan.Desired && current != nil && current.Desired &&
 				current.AddressBookID == plan.AddressBookID && current.Href == resource.Href &&
 				current.LocalHash == snapshot.Fingerprint && resource.LocalHash == snapshot.Fingerprint {

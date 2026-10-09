@@ -1801,6 +1801,8 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		{name: "labeled remote phone edit", phone: true, phoneTypes: []string{"work"}, pref: new(1), before: "tel:+12025550102", after: "tel:+12025550103", conflict: "TEL", keepRemote: true},
 		{name: "remote phone text", phone: true, before: "TEL:+12025550102", after: "TEL;VALUE=text:call the front desk", conflict: "TEL"},
 		{name: "remote email whitespace", types: []string{"home"}, before: "e1@example.test", after: " e1@example.test ", conflict: "EMAIL"},
+		{name: "remote adds labeled email", types: []string{""}, before: "END:VCARD", after: "EMAIL;TYPE=work:added@example.test\r\nEND:VCARD", conflict: "EMAIL"},
+		{name: "remote adds labeled phone", phone: true, before: "END:VCARD", after: "TEL;TYPE=cell:+12025550104\r\nEND:VCARD", conflict: "TEL"},
 		{name: "remote adds email whitespace", types: []string{"home"}, before: "END:VCARD", after: "EMAIL: added@example.test \r\nEND:VCARD", conflict: "EMAIL"},
 		{name: "address", before: "Example Street", after: "Changed Street", conflict: "ADR", keepRemote: true},
 		{name: "photo URI", before: "https://example.test/old.jpg", after: "https://example.test/new.jpg", conflict: "PHOTO", keepRemote: true},
