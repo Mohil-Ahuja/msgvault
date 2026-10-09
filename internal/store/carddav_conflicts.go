@@ -1258,20 +1258,31 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 		if err != nil {
 			return err
 		}
-		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
-		if err != nil || mapping.MappingRevision != input.ExpectedMappingRevision {
+		var personID sql.NullInt64
+		err = tx.QueryRowContext(ctx, `SELECT person_id FROM carddav_resources WHERE address_book_id = ? AND href = ?`, identity.AddressBookID, identity.Href).Scan(&personID)
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCardDAVConflictStale
 		}
-		if input.ExpectedPersonID != 0 && (mapping.PersonID == nil || *mapping.PersonID != input.ExpectedPersonID) {
-			return ErrCardDAVReviewStale
+		if err != nil {
+			return fmt.Errorf("read CardDAV conflict person binding: %w", err)
 		}
-		if mapping.PersonID != nil {
-			if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "person-fact-generation", *mapping.PersonID); err != nil {
+		if personID.Valid {
+			if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "person-fact-generation", personID.Int64); err != nil {
 				return err
 			}
 		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
+		}
+		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
+		if err != nil || mapping.MappingRevision != input.ExpectedMappingRevision {
+			return ErrCardDAVConflictStale
+		}
+		if (mapping.PersonID != nil) != personID.Valid || (personID.Valid && *mapping.PersonID != personID.Int64) {
+			return ErrCardDAVConflictStale
+		}
+		if input.ExpectedPersonID != 0 && (mapping.PersonID == nil || *mapping.PersonID != input.ExpectedPersonID) {
+			return ErrCardDAVReviewStale
 		}
 		conflict, err := getCardDAVConflictFrom(ctx, tx, input.ConflictID, s.dialect.SelectForUpdate())
 		if err != nil {

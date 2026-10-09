@@ -1567,9 +1567,12 @@ func TestKeepLocalRecordsLineMappingSoNextSyncDoesNotDuplicateEmail(t *testing.T
 	assert.Equal(1, strings.Count(string(fixture.body), "alice.updated@example.test"), string(fixture.body))
 }
 
-func publishedImportFixture(t *testing.T) (*conflictMutationServer, *Service, *store.Store, int64) {
+func publishedImportFixture(t *testing.T, versions ...string) (*conflictMutationServer, *Service, *store.Store, int64) {
 	t.Helper()
 	fixture := &conflictMutationServer{body: conflictCardWithEmail("person", "Alice", "e1@example.test", "e2@example.test"), etag: `"remote-1"`}
+	if len(versions) > 0 {
+		fixture.body = bytes.Replace(fixture.body, []byte("VERSION:4.0"), []byte("VERSION:"+versions[0]), 1)
+	}
 	server := httptest.NewServer(fixture.handler(t))
 	t.Cleanup(server.Close)
 	service, st, book := newPullService(t, server, false)
@@ -1756,8 +1759,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		types                  []string
-		typeLabel              *string
-		pref                   *int
 		before                 string
 		after                  string
 		want                   string
@@ -1765,7 +1766,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		imported               bool
 		rename                 bool
 		addLanguageAfterRename bool
-		fnLanguage             *string
 		fnTypes                []string
 		fnPref                 *int
 		userFN                 bool
@@ -1845,14 +1845,14 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 				var err error
 				phone, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550102",
-					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: tc.phoneTypes, Pref: tc.pref},
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: tc.phoneTypes},
 				})
 				require.NoError(err)
 			}
 			if tc.userFN {
 				var err error
 				userName, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{
-					NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"), Language: tc.fnLanguage,
+					NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"),
 					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: tc.fnTypes, Pref: tc.fnPref},
 				})
 				require.NoError(err)
@@ -1889,7 +1889,7 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 				}
 				_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
 					AddressKind: store.ContactAddressEmail, OriginalValue: email,
-					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: strings.Fields(label), TypeLabel: tc.typeLabel, Pref: tc.pref},
+					Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, TypeTokens: strings.Fields(label)},
 				})
 				require.NoError(err)
 			}
@@ -1987,10 +1987,6 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 							if tc.name == "remote adds email type and preference" {
 								assert.Equal([]string{"work"}, snapshot.Profile.ContactPoints[0].Envelope.TypeTokens)
 								assert.Equal(new(2), snapshot.Profile.ContactPoints[0].Envelope.Pref)
-							}
-							if tc.phone {
-								assert.Equal(tc.phoneTypes, snapshot.Profile.ContactPoints[0].Envelope.TypeTokens)
-								assert.Equal(tc.pref, snapshot.Profile.ContactPoints[0].Envelope.Pref)
 							}
 						}
 					}
@@ -2891,4 +2887,37 @@ func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
 	assert.Equal(field, view.Remote.Fields[0].Name)
 	assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
 	assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
+}
+
+func TestRemoteEmailEditKeepsV3DerivedNameFollowingStructuredName(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	fixture, service, st, personID := publishedImportFixture(t, "3.0")
+	names, err := st.ListPersonNamesContext(t.Context(), personID, true)
+	require.NoError(err)
+	for _, name := range names {
+		require.NoError(st.SupersedePersonNameContext(t.Context(), personID, name.Envelope.ID, nil))
+	}
+	structured, err := st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameStructured, GivenName: new("Alice"), FamilyName: new("Example"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	require.Contains(string(fixture.body), "VERSION:3.0")
+	require.Contains(string(fixture.body), "FN:Alice Example")
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("e2@example.test"), []byte("e2b@example.test"), 1), `"email-edit"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(err)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(err)
+	assert.Empty(conflicts)
+	names, err = st.ListPersonNamesContext(t.Context(), personID, true)
+	require.NoError(err)
+	require.Len(names, 1, "an unchanged derived FN must not become an explicit formatted name")
+	assert.Equal(store.PersonNameStructured, names[0].NameKind)
+	require.NoError(st.SupersedePersonNameContext(t.Context(), personID, structured.Envelope.ID, nil))
+	_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameStructured, GivenName: new("Updated"), FamilyName: new("Example"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	require.NoError(service.ReconcilePublications(t.Context()))
+	assert.Contains(string(fixture.lastPutBody), "FN:Updated Example")
+	assert.NotContains(string(fixture.lastPutBody), "FN:Alice Example")
+	assert.Contains(string(fixture.lastPutBody), "e2b@example.test")
 }

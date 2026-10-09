@@ -651,3 +651,64 @@ func parseCardDAVRemoteForStoreTest(href, etag string, body []byte) store.CardDA
 		RemoteBody: body, SemanticHash: "retained-remote-hash", DisplayName: "Remote",
 	}
 }
+
+func TestCardDAVKeepRemoteAndMergeRevalidatePersonBinding(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, _, book, mapping := seededCardDAVConflictMapping(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL merge/resolution lock ordering")
+	}
+	require.NotNil(mapping.PersonID)
+	var survivorID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`), "merge-survivor", "Synthetic Survivor").Scan(&survivorID))
+	capture := conflictCapture(mapping)
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), capture)
+	require.NoError(err)
+	remote := parseCardDAVRemoteForStoreTest(mapping.Href, capture.RemoteETag, capture.RemoteBody)
+	absorbed, err := st.GetPersonContext(t.Context(), *mapping.PersonID)
+	require.NoError(err)
+	survivor, err := st.GetPersonContext(t.Context(), survivorID)
+	require.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	t.Cleanup(cancel)
+	blocker, err := st.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	// A shared lock queues the identity UPDATE while allowing its prerequisite INSERT to finish.
+	var identityValue string
+	require.NoError(blocker.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = 'identity_revision' FOR SHARE`).Scan(&identityValue))
+	waitingBefore := postgreSQLWaitingLockCount(t, st)
+	mergeDone := make(chan error, 1)
+	go func() {
+		_, mergeErr := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "carddav-keep-remote-merge", Actor: "test"})
+		mergeDone <- mergeErr
+	}()
+	require.Eventually(func() bool { return postgreSQLWaitingLockCount(t, st) >= waitingBefore+1 }, 5*time.Second, 10*time.Millisecond, "merge did not wait on identity lock")
+	resolveDone := make(chan error, 1)
+	go func() {
+		_, resolveErr := st.ResolveCardDAVConflictRemoteContext(ctx, store.CardDAVConflictRemoteResolution{ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, Remote: remote})
+		resolveDone <- resolveErr
+	}()
+	require.Eventually(func() bool { return postgreSQLWaitingLockCount(t, st) >= waitingBefore+2 }, 5*time.Second, 10*time.Millisecond, "resolution did not wait behind merge")
+	require.NoError(blocker.Commit())
+	select {
+	case mergeErr := <-mergeDone:
+		require.NoError(mergeErr)
+	case <-ctx.Done():
+		require.FailNow("merge did not finish", ctx.Err())
+	}
+	select {
+	case resolveErr := <-resolveDone:
+		require.ErrorIs(resolveErr, store.ErrCardDAVConflictStale)
+	case <-ctx.Done():
+		require.FailNow("resolution did not finish", ctx.Err())
+	}
+	current, err := st.GetCardDAVResourceContext(t.Context(), book.ID, mapping.Href)
+	require.NoError(err)
+	assert.Equal(&survivor.ID, current.PersonID)
+	assert.Equal(conflict.MappingRevision, current.MappingRevision)
+	after, err := st.GetCardDAVConflictContext(t.Context(), conflict.ID)
+	require.NoError(err)
+	assert.Equal(store.CardDAVConflictUnresolved, after.Status)
+}

@@ -1664,6 +1664,15 @@ func (s *Store) rebaseCardDAVReplaceableOwnerTx(
 	switch {
 	case property == "FN" && mapping.Table == "persons":
 		return owner.kept, nil
+	case property == "FN" && mapping.Table == personNamesTableName && mapping.Field == "derived_fn":
+		name, err := getPersonNameTx(ctx, tx, personID, mapping.RowID)
+		if errors.Is(err, ErrProfileValueNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return owner.kept && name.NameKind == PersonNameStructured && name.Envelope.IsCurrent(), nil
 	case property == "FN" && mapping.Table == personNamesTableName && mapping.Field == "formatted":
 		name, err := getPersonNameTx(ctx, tx, personID, mapping.RowID)
 		if errors.Is(err, ErrProfileValueNotFound) {
