@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
+	"go.kenn.io/msgvault/internal/twenty"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -235,6 +236,16 @@ type ServerConfig struct {
 	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
 	credential runtimeCredential
+
+	RemoteClients []RemoteClientConfig `toml:"remote_clients,omitzero"` // Read-only API keys for remote CLIs (requires an effective API key)
+}
+
+// RemoteClientConfig grants a remote CLI read-only API access with its own key.
+type RemoteClientConfig struct {
+	ClientID         string `toml:"client_id"`
+	APIKeyFile       string `toml:"api_key_file"`
+	CollectionsWrite bool   `toml:"collections_write,omitzero"` // Also allow creating, editing and deleting collections
+	APIKey           string `toml:"-"`                          // Loaded from APIKeyFile when the server starts
 }
 
 func (s *ServerConfig) ApplyDefaults() {
@@ -264,6 +275,13 @@ func (t TelemetryConfig) EnabledOrDefault() bool {
 func (s *ServerConfig) Validate() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
+	}
+	clientIDs := make(map[string]bool, len(s.RemoteClients))
+	for _, client := range s.RemoteClients {
+		if client.ClientID == "" || clientIDs[client.ClientID] {
+			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
+		}
+		clientIDs[client.ClientID] = true
 	}
 	switch s.DaemonAutoRestart {
 	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
@@ -531,6 +549,7 @@ type Config struct {
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
+	Twenty             []TwentySource                  `toml:"twenty"`
 	Backup             BackupConfig                    `toml:"backup"`
 	Discord            DiscordConfig                   `toml:"discord"`
 	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
@@ -1900,13 +1919,28 @@ func (s PlaudSource) EffectiveAccountEmail() (string, error) {
 }
 
 // NotionMeetingsSource is one configured Notion AI Meeting Notes identity.
-// Authentication uses a read-only integration token stored in config.toml.
+// Meeting access and optional workspace user access use separate credentials.
 type NotionMeetingsSource struct {
 	Identifier   string `toml:"identifier"`
 	AccountEmail string `toml:"account_email"`
 	Token        string `toml:"token"`
+	UsersToken   string `toml:"users_token"`
 	Schedule     string `toml:"schedule"`
 	Enabled      bool   `toml:"enabled"`
+}
+
+// TwentySource reads Call Recorder evidence through a role-scoped API key.
+type TwentySource struct {
+	Identifier   string `toml:"identifier"`
+	AccountEmail string `toml:"account_email"`
+	BaseURL      string `toml:"base_url"`
+	APIKey       string `toml:"api_key"`
+	Schedule     string `toml:"schedule"`
+	Enabled      bool   `toml:"enabled"`
+}
+
+func (s TwentySource) EffectiveAccountEmail() (string, error) {
+	return effectiveMeetingAccountEmail("twenty", s.Identifier, s.AccountEmail)
 }
 
 // EffectiveAccountEmail returns the normalized primary identity configured
@@ -2007,6 +2041,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
 		c.Plaud[0].Identifier = "default"
 	}
+	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
+		c.Twenty[0].Identifier = "default"
+	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
 		c.Granola[0].Identifier = "default"
 	}
@@ -2041,6 +2078,26 @@ func (c *Config) validateMeetingSources() error {
 			seen[key] = true
 		}
 		return nil
+	}
+	twentyIDs := make([]string, len(c.Twenty))
+	for i, s := range c.Twenty {
+		twentyIDs[i] = strings.TrimSpace(s.Identifier)
+		c.Twenty[i].Identifier = twentyIDs[i]
+	}
+	if err := check("twenty", twentyIDs); err != nil {
+		return err
+	}
+	for i := range c.Twenty {
+		email, err := c.Twenty[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Twenty[i].AccountEmail = email
+		baseURL, err := twenty.ValidateBaseURL(c.Twenty[i].BaseURL)
+		if err != nil {
+			return fmt.Errorf("[[twenty]] identifier %q: %w", c.Twenty[i].Identifier, err)
+		}
+		c.Twenty[i].BaseURL = baseURL
 	}
 	granolaIDs := make([]string, len(c.Granola))
 	for i, s := range c.Granola {
@@ -2245,6 +2302,26 @@ func (c *Config) GetMuesliSource(identifier string) *MuesliSource {
 func (c *Config) ScheduledMuesliSources() []MuesliSource {
 	var out []MuesliSource
 	for _, src := range c.Muesli {
+		if src.Enabled && src.Schedule != "" {
+			out = append(out, src)
+		}
+	}
+	return out
+}
+
+func (c *Config) GetTwentySource(identifier string) *TwentySource {
+	for _, src := range c.Twenty {
+		if strings.EqualFold(src.Identifier, identifier) {
+			cp := src
+			return &cp
+		}
+	}
+	return nil
+}
+
+func (c *Config) ScheduledTwentySources() []TwentySource {
+	var out []TwentySource
+	for _, src := range c.Twenty {
 		if src.Enabled && src.Schedule != "" {
 			out = append(out, src)
 		}

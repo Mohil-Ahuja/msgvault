@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-07"
+last_edited: "2026-10-08"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1022,6 +1022,50 @@ See [Meeting Transcripts](/docs/usage/meetings/) for setup and what gets stored.
 
 ---
 
+## add-twenty
+
+Validate read access and register a configured Twenty call recording source.
+
+```bash
+msgvault add-twenty [identifier]
+```
+
+The daemon-host `[[twenty]]` entry requires `account_email`, `base_url`, and
+`api_key`. One entry permits omitting the identifier. Registration checks
+recording, calendar, and participant access before creating the source.
+
+---
+
+## sync-twenty
+
+Archive summaries and diarized transcripts from Twenty call recordings.
+
+```bash
+msgvault sync-twenty [identifier]
+msgvault sync-twenty work --after 2026-01-01 --limit 10
+msgvault sync-twenty work --full
+msgvault sync-twenty work --probe
+```
+
+Each run reads recordings updated since the last successful run, plus a
+five-minute overlap; late summaries and transcripts update the existing meeting. Recordings that can't be
+archived are skipped and reported instead of failing the run. With no identifier, sync visits all configured sources.
+API failures fail the run while retaining previously committed meetings.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--limit` | `0` | Maximum eligible meetings processed (`0` = unlimited); stopped scans report partial coverage, and the next run without `--after` continues, including a stopped `--full` rescan |
+| `--after` | — | Inclusive UTC occurrence-date lower bound (`YYYY-MM-DD`) applied after reading; leaves the sync position unchanged |
+| `--full` | `false` | Rescan every recording and refresh archive projections and attribution; resumes an unfinished limited rescan instead of restarting it |
+| `--probe` | `false` | Check read access without printing content or writing the archive; requires one source |
+| `--build-cache` | `false` | Request a cache build after manual sync |
+| `--no-build-cache` | `false` | Skip the cache build after manual sync |
+
+See [Meeting Transcripts](/docs/usage/meetings/#twenty-call-recordings) for setup,
+stored evidence, duration fallbacks, and retained source deletions.
+
+---
+
 ## add-muesli
 
 Check a configured local Muesli database and register it as a meeting source.
@@ -2040,6 +2084,19 @@ analytics stale for the normal rebuild path.
 
 ---
 
+## media search
+
+Find spoken words in recording transcripts through the daemon's configured Docbank integration:
+
+```bash
+msgvault media search "quarterly numbers"
+msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
+```
+
+`--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields. Search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A scope may contain at most 4,096 distinct media versions and source selectors; narrow the person scope if it exceeds that ceiling. Use `msgvault show-message <message_id>` to read a result in context. Browser search-result presentation follows separately.
+
 ## documents
 
 Manage hosted extraction and local full-text indexing for standalone document
@@ -2176,6 +2233,8 @@ message ID. A numeric reference selects a live internal ID first, then falls
 back to a provider ID if that internal ID does not exist. This also applies
 with `--thread`.
 
+A provider ID that matches more than one account returns an error. Use the numeric archive message ID to select one message.
+
 ```bash
 msgvault export-eml <id> [flags]
 ```
@@ -2209,6 +2268,8 @@ msgvault export-attachment <content-hash> [flags]
 | `--json` | Output as JSON with base64-encoded data |
 
 The `--json`, `--base64`, and `--output` flags are mutually exclusive.
+
+Stdout output, including `--json`, streams before download verification finishes. Consume it only after the command exits successfully. Use `--output <path>` to save a verified file.
 
 See [Exporting Data](/docs/usage/exporting/) for usage examples.
 
@@ -3988,6 +4049,27 @@ msgvault repair-message 123 --source-id 42
 | `--json` | Emit newline-delimited audit results; requires `--audit` |
 
 Without `--audit`, supply exactly one internal numeric message ID or Gmail ID.
+Repair fetches a fresh Gmail snapshot and replaces that message's stored MIME,
+headers, bodies, recipients, labels, and MIME attachment rows. It preserves the
+internal message ID and provider-owned attachments.
+
+The audit parses stored raw MIME and compares it with the archived fields on
+every run. It does not contact Gmail, change the archive, or read saved mismatch
+flags. Coherent messages are omitted. After a successful repair, run the same
+audit again to confirm the message is omitted; no re-sync or cache rebuild is
+needed. When stored part keys are available, attachments are compared by
+physical MIME occurrence, so separate parts with identical bytes still count
+separately. Older rows without part keys cannot prove how many times identical
+content occurred.
+
+An `inconclusive` raw MIME result means the stored MIME is missing, cannot be
+decoded or parsed, or exceeds the audit's 64 MiB decompression limit. Repair
+fetches fresh MIME from Gmail and requires it to parse successfully. If fetching,
+parsing, publishing attachment bytes, or replacing the snapshot fails, the stored
+snapshot stays unchanged. A later cache-refresh error can occur after the
+snapshot has been committed; re-audit to check that snapshot. If a message
+remains flagged after a successful repair, retain the new audit result and the
+repair's error output for diagnosis.
 
 ## repair-derived
 

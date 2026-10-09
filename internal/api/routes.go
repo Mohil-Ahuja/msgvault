@@ -214,6 +214,15 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
+	if auth.Mode == AuthModeRemoteClient {
+		if op := ctx.Operation(); op != nil && remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
+			next(ctx)
+			return
+		}
+		s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
+		writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
+		return
+	}
 	if auth.Mode != AuthModeRequired {
 		next(ctx)
 		return
@@ -286,6 +295,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)
+	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search source-selected transcripts as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
 	s.registerPersonProfileRoutes(apiV1)
 	s.registerPersonIdentityRoutes(apiV1)
@@ -362,11 +372,11 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRouteWithRequest[deletion.Manifest, CLIDeletionManifestResponse](apiV1, "createCLIDeletionManifest", http.MethodPost, "/cli/deletion-manifests", "Create a staged deletion manifest", s.handleCLICreateDeletionManifest)
 	registerAPIV1RawHumaJSONRouteWithRequest[CLIEmbeddingsPlanRequest, CLIEmbeddingsPlanResponse](apiV1, "planCLIEmbeddings", http.MethodPost, "/cli/embeddings/plan", "Plan CLI embeddings management", s.handleCLIEmbeddingsPlan)
 	registerAPIV1RawHumaNDJSONRouteWithRequest[CLIRunRequest, CLIRunEvent](apiV1, "runCLI", http.MethodPost, "/cli/run", "Run an allowlisted CLI command", s.handleCLIRun)
-	registerAPIV1RawHumaJSONRoute[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage)
+	registerAPIV1RawHumaJSONRouteWithErrors[cliMessageResponse](apiV1, "getCLIMessage", http.MethodGet, "/cli/message", "Get one message for CLI output", s.handleCLIMessage, http.StatusRequestEntityTooLarge)
 	registerAPIV1RawHumaJSONRouteWithErrors[cliOriginalMessageResponse](apiV1, "getCLIMessageOriginal", http.MethodGet, "/cli/message/original", "Get one message's original MIME for export", s.handleCLIMessageOriginal,
 		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	registerAPIV1RawHumaJSONRouteWithErrors[query.ThreadPage](apiV1, "getCLIMessageThread", http.MethodGet, "/cli/message/thread", "List one conversation in chronological order for export", s.handleCLIMessageThread,
-		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable)
+		http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable)
 	// Agent-token management routes: owner API key required.
 	registerAPIV1RawHumaJSONRouteWithRequest[agentTokenIssueRequest, agentTokenIssueResponse](apiV1, "issueAgentToken", http.MethodPost, "/agent-tokens", "Issue a restricted agent grant", s.handleIssueAgentToken, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[agentTokenListResponse](apiV1, "listAgentTokens", http.MethodGet, "/agent-tokens", "List active agent grants", s.handleListAgentTokens)
@@ -386,6 +396,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
@@ -400,6 +412,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusNotFound,
+		http.StatusRequestEntityTooLarge,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,
 	)
@@ -784,6 +797,14 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryStringParam("message_type", "Message type filter; repeat or comma-separate for multiple values", false),
 			queryStringParam("deletion_scope", "Source deletion scope: active (default), deleted, or any", false),
 		}, scopeParams()...)
+	case "searchMedia":
+		return []*huma.Param{
+			queryStringParam("q", "Spoken words to find in transcripts", true),
+			queryStringParam("mode", "Lexical mode; semantic and hybrid are unavailable", false),
+			queryIntegerParam("person_id", "Durable person ID"),
+			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
+			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
+		}
 	case "searchDocuments":
 		return []*huma.Param{
 			queryStringParam("q", "Extracted document content or filename query", true),

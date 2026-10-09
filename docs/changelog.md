@@ -14,6 +14,10 @@ All notable changes to msgvault, grouped by release.
   mounts the HTTP API in the program's own server. PostgreSQL-only programs can
   build without CGO. See the [Go library guide](guides/embedding.md).
 
+- [Read-only remote clients](guides/remote-deployment.md#read-only-remote-clients) get separate reader credentials with response limits and optional collection writes.
+- Single-message [export-eml](cli-reference.md#export-eml) refuses ambiguous provider IDs for owner and reader keys.
+- Consume streamed [export-attachment](cli-reference.md#export-attachment) stdout only after the command succeeds.
+
 - msgvault sends anonymous usage telemetry: a daemon ping at startup and once
   each later UTC day, and an `app_opened` event the web UI reports through the
   daemon when it opens and on its first focus on a later UTC day. Events carry
@@ -93,6 +97,8 @@ All notable changes to msgvault, grouped by release.
 - **Transcripts beside recordings:** the Web reader shows each recording's
   Docbank transcript, or why there isn't one, under the expanded message.
   `GET /api/v1/messages/{id}/recordings` serves the same list (API schema 3.6.0).
+
+- **Search spoken words:** `msgvault media search`, MCP `search_media`, and `GET /api/v1/media/search` find current recording transcripts and show partial coverage when some recordings aren't searchable (API schema 3.7.0).
 
 ## 0.21.0
 <small>2026-10-02</small>

@@ -367,6 +367,8 @@ type GetCLIAttachmentErrorResponseJSON = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
+type GetCLIAttachmentErrorResponseJSON413 = ErrorResponse
+
 type GetCLIAttachmentErrorResponseJSON500 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON503 = ErrorResponse
@@ -551,6 +553,10 @@ type GetCLIMessageRawErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON404 = ErrorResponse
 
+type GetCLIMessageRawErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageRawErrorResponseJSON413 = ErrorResponse
+
 type GetCLIMessageRawErrorResponseJSON500 = ErrorResponse
 
 type GetCLIMessageRawErrorResponseJSON503 = ErrorResponse
@@ -562,6 +568,8 @@ type GetCLIMessageThreadErrorResponse = ErrorResponse
 type GetCLIMessageThreadErrorResponseJSON = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON409 = ErrorResponse
+
+type GetCLIMessageThreadErrorResponseJSON413 = ErrorResponse
 
 type GetCLIMessageThreadErrorResponseJSON503 = ErrorResponse
 
@@ -1596,6 +1604,24 @@ type GetTaskIntegrationStatusErrorResponse = ErrorResponse
 type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
+
+type SearchMediaResponse = MediaSearchResponse
+
+type SearchMediaErrorResponse = ErrorResponse
+
+type SearchMediaErrorResponseJSON = ErrorResponse
+
+type SearchMediaErrorResponseJSON404 = ErrorResponse
+
+type SearchMediaErrorResponseJSON409 = ErrorResponse
+
+type SearchMediaErrorResponseJSON422 = ErrorResponse
+
+type SearchMediaErrorResponseJSON429 = ErrorResponse
+
+type SearchMediaErrorResponseJSON500 = ErrorResponse
+
+type SearchMediaErrorResponseJSON503 = ErrorResponse
 
 type ListMeetingActionItemsResponse = ActionsPage
 
@@ -3945,6 +3971,7 @@ type GetCLIAttachmentResp struct {
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
+	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500
 	JSON503      *GetCLIAttachmentErrorResponseJSON503
 }
@@ -4141,6 +4168,7 @@ type GetCLIMessageResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetCLIMessageResponse
+	JSON413      *GetCLIMessageErrorResponse
 }
 
 type GetCLIMessageOriginalResp struct {
@@ -4162,6 +4190,8 @@ type GetCLIMessageRawResp struct {
 	JSON400      *GetCLIMessageRawErrorResponse
 	JSON401      *GetCLIMessageRawErrorResponseJSON
 	JSON404      *GetCLIMessageRawErrorResponseJSON404
+	JSON409      *GetCLIMessageRawErrorResponseJSON409
+	JSON413      *GetCLIMessageRawErrorResponseJSON413
 	JSON500      *GetCLIMessageRawErrorResponseJSON500
 	JSON503      *GetCLIMessageRawErrorResponseJSON503
 }
@@ -4174,6 +4204,7 @@ type GetCLIMessageThreadResp struct {
 	JSON400      *GetCLIMessageThreadErrorResponse
 	JSON404      *GetCLIMessageThreadErrorResponseJSON
 	JSON409      *GetCLIMessageThreadErrorResponseJSON409
+	JSON413      *GetCLIMessageThreadErrorResponseJSON413
 	JSON503      *GetCLIMessageThreadErrorResponseJSON503
 }
 
@@ -4832,6 +4863,21 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type SearchMediaResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SearchMediaResponse
+	JSON400      *SearchMediaErrorResponse
+	JSON403      *SearchMediaErrorResponseJSON
+	JSON404      *SearchMediaErrorResponseJSON404
+	JSON409      *SearchMediaErrorResponseJSON409
+	JSON422      *SearchMediaErrorResponseJSON422
+	JSON429      *SearchMediaErrorResponseJSON429
+	JSON500      *SearchMediaErrorResponseJSON500
+	JSON503      *SearchMediaErrorResponseJSON503
 }
 
 type ListMeetingActionItemsResp struct {
