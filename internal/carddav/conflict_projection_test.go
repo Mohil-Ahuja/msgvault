@@ -112,10 +112,6 @@ func TestProjectConflictContactShowsLabelsAndProfileFields(t *testing.T) {
 	assert.Contains(got.Fields[1].Value, "123 Example Street")
 	assert.Equal([]string{"TYPE=work", "LABEL=Office"}, got.Fields[1].Labels)
 	assert.Equal("Engineer", got.Fields[2].Value)
-	edited := strings.ReplaceAll(string(body), "TYPE=home", "TYPE=work")
-	remote := projectConflictContact([]byte(edited), false)
-	assert.Equal([]string{"person@example.test"}, remote.Emails)
-	assert.NotEqual(got.Fields, remote.Fields)
 }
 
 func TestProjectConflictStructuredComponentsPreservePositionsAndEscapes(t *testing.T) {

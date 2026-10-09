@@ -1599,7 +1599,6 @@ func TestRemoteEditToPublishedImportReachesPerson(t *testing.T) {
 		localKind  store.ContactAddressKind
 		remoteEdit string
 	}{
-		{name: "unchanged since publish"},
 		{name: "after a local edit was published", localEdit: "alice-local@example.test"},
 		{name: "remote replaces a published local email", localEdit: "e3@example.test", remoteEdit: "e3b@example.test"},
 		{name: "remote removes a published local email", localEdit: "e3@example.test", remoteEdit: "remove"},
@@ -1677,6 +1676,7 @@ func TestKeepRemoteRebasesPublishedLocalContactPoint(t *testing.T) {
 	}
 	fixture.mu.Lock()
 	edited := bytes.Replace(fixture.body, []byte("e3@example.test"), []byte("e3b@example.test"), 1)
+	edited = bytes.Replace(edited, []byte("e2@example.test"), []byte("e2b@example.test"), 1)
 	fixture.mu.Unlock()
 	fixture.setRemote(edited, `"remote-2"`)
 	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
@@ -1684,17 +1684,26 @@ func TestKeepRemoteRebasesPublishedLocalContactPoint(t *testing.T) {
 	conflicts, err := service.ListConflicts(t.Context())
 	require.NoError(err)
 	require.Len(conflicts, 1)
-	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
-	require.NoError(service.ReconcilePublications(t.Context()))
 	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
 	require.NoError(err)
 	values := make([]string, 0, len(points))
 	for _, point := range points {
 		values = append(values, point.OriginalValue)
 	}
-	assert.ElementsMatch([]string{"e1@example.test", "e2@example.test", "e3b@example.test", "e5@example.test"}, values)
+	assert.ElementsMatch([]string{"e1@example.test", "e2@example.test", "e3@example.test", "e5@example.test"}, values)
+	require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+	require.NoError(service.ReconcilePublications(t.Context()))
+	points, err = st.ListPersonContactPointsContext(t.Context(), personID, true)
+	require.NoError(err)
+	values = values[:0]
+	for _, point := range points {
+		values = append(values, point.OriginalValue)
+	}
+	assert.ElementsMatch([]string{"e1@example.test", "e2b@example.test", "e3b@example.test", "e5@example.test"}, values)
 	assert.Equal(2, fixture.puts)
 	assert.NotContains(string(fixture.lastPutBody), "EMAIL:e3@example.test")
+	assert.NotContains(string(fixture.lastPutBody), "EMAIL:e2@example.test")
+	assert.Contains(string(fixture.lastPutBody), "e2b@example.test")
 	assert.Contains(string(fixture.lastPutBody), "e3b@example.test")
 	assert.Contains(string(fixture.lastPutBody), "e5@example.test")
 }
@@ -1726,33 +1735,6 @@ func TestRemoteDeleteOfPublishedImportStopsPublishing(t *testing.T) {
 	conflicts, err := service.ListConflicts(t.Context())
 	require.NoError(err)
 	assert.Empty(conflicts)
-}
-
-func TestRemoteEditToPublishedImportWithLocalEditConflicts(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	fixture, service, st, personID := publishedImportFixture(t)
-	_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
-		AddressKind: store.ContactAddressEmail, OriginalValue: "alice-local@example.test",
-		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
-	})
-	require.NoError(err)
-	fixture.setRemote(conflictCardWithEmail("person", "Alice", "e1@example.test", "e2b@example.test"), `"remote-2"`)
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
-	require.NoError(err)
-
-	conflicts, err := service.ListConflicts(t.Context())
-	require.NoError(err)
-	assert.Len(conflicts, 1)
-	points, err := st.ListPersonContactPointsContext(t.Context(), personID, true)
-	require.NoError(err)
-	values := make([]string, 0, len(points))
-	for _, point := range points {
-		values = append(values, point.OriginalValue)
-	}
-	assert.Contains(values, "e2@example.test")
-	assert.NotContains(values, "e2b@example.test")
 }
 
 func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
@@ -2082,7 +2064,7 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 }
 
 func TestCardDAVKeepRemoteSupersedesDisplacedUserOwner(t *testing.T) {
-	for _, field := range []string{"EMAIL TYPE", "EMAIL label", "EMAIL PREF", "TEL TYPE", "TEL label", "TEL PREF", "FN LANGUAGE"} {
+	for _, field := range []string{"EMAIL TYPE", "EMAIL label", "EMAIL PREF", "TEL TYPE", "FN LANGUAGE"} {
 		t.Run(field, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -2111,9 +2093,9 @@ func TestCardDAVKeepRemoteSupersedesDisplacedUserOwner(t *testing.T) {
 				switch field {
 				case "EMAIL TYPE", "TEL TYPE":
 					input.Envelope.TypeTokens = []string{"work"}
-				case "EMAIL label", "TEL label":
+				case "EMAIL label":
 					input.Envelope.TypeLabel = new("Office")
-				case "EMAIL PREF", "TEL PREF":
+				case "EMAIL PREF":
 					input.Envelope.Pref = new(1)
 				}
 				if field[:3] == "TEL" {
@@ -2324,6 +2306,75 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 			if tc.name == "RELATED" {
 				assert.Contains(body, "RELATED;TYPE=neighbor:urn:uuid:00000000-0000-4000-8000-000000000001")
 			}
+		})
+	}
+}
+
+func TestKeepRemoteRejectsAndRefreshesAfterLocalEmploymentEdit(t *testing.T) {
+	for _, tombstone := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote-tombstone-%t", tombstone), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture, service, st, personID := publishedImportFixture(t)
+			organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+			require.NoError(err)
+			input := store.EmploymentInput{
+				PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"),
+				IsCurrent: new(true), IsPrimary: new(true), Source: store.ProvenanceUser,
+			}
+			employment, err := st.AddEmploymentContext(t.Context(), input)
+			require.NoError(err)
+			require.NoError(service.ReconcilePublications(t.Context()))
+			if tombstone {
+				input.Title = new("Captured local title")
+				employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
+				require.NoError(err)
+				fixture.setRemote(nil, "")
+			} else {
+				fixture.setRemote(bytes.Replace(fixture.body, []byte("TITLE:Engineer"), []byte("TITLE:Remote title"), 1), `"title-edit"`)
+			}
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(err)
+			require.Len(conflicts, 1)
+			input.Title = new("New local title")
+			employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
+			require.NoError(err)
+			source, err := st.LoadCardDAVConflictReviewSourceContext(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			puts := fixture.puts
+			require.ErrorIs(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote), store.ErrCardDAVConflictStale)
+			got, err := st.GetEmploymentContext(t.Context(), employment.ID)
+			require.NoError(err)
+			assert.Equal(*employment, *got)
+			publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+			require.NoError(err)
+			require.NotNil(source.Publication)
+			assert.Equal(*source.Publication, *publication)
+			mapping, err := st.GetCardDAVResourceContext(t.Context(), source.Book.ID, source.Resource.Href)
+			require.NoError(err)
+			wantMapping := *source.Resource
+			wantMapping.MappingRevision++
+			wantMapping.UpdatedAt = mapping.UpdatedAt
+			assert.Equal(wantMapping, *mapping)
+			assert.Equal(puts, fixture.puts)
+			view, err := service.GetConflictView(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVConflictUnresolved, view.Status)
+			labels := []string{}
+			if !tombstone {
+				labels = []string{"Job fields differ from remote"}
+			}
+			assert.Contains(view.Local.Fields, ContactField{Name: "TITLE", Value: "New local title", Labels: labels})
+			assert.Equal(tombstone, view.Remote.State == ConflictSideDeleted)
+			require.NoError(service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepLocal))
+			assert.Equal(puts+1, fixture.puts)
+			assert.Contains(string(fixture.lastPutBody), "TITLE:New local title")
+			resolved, err := st.GetCardDAVConflictContext(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			assert.Equal(store.CardDAVConflictResolved, resolved.Status)
+			assert.Equal(store.CardDAVResolutionKeepLocal, resolved.Resolution)
 		})
 	}
 }

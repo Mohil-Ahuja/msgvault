@@ -1301,6 +1301,18 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 			return ErrCardDAVPublicationPending
 		}
 		publicationPersonID := mapping.PersonID
+		if mapping.PersonID != nil && !conflict.LocalTombstone {
+			if err := s.lockPersonVCardProjectionTx(ctx, tx, *mapping.PersonID, conflict.LocalHash); err != nil {
+				return err
+			}
+			snapshot, err := s.loadPersonVCardSnapshotTx(ctx, tx, *mapping.PersonID)
+			if err != nil {
+				return err
+			}
+			if snapshot.Fingerprint != conflict.LocalHash {
+				return ErrCardDAVConflictStale
+			}
+		}
 		if input.RemoteTombstone != conflict.RemoteTombstone {
 			return ErrCardDAVConflictStale
 		}

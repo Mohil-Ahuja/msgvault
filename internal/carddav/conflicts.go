@@ -139,6 +139,25 @@ func (s *Service) ResolveConflict(ctx context.Context, id int64, choice Resoluti
 			ConflictID: conflict.ID, ExpectedMappingRevision: conflict.MappingRevision, ExpectedPersonID: conflictGuardPersonID(operationCtx),
 			Remote: remote, RemoteTombstone: tombstone,
 		})
+		if errors.Is(err, store.ErrCardDAVConflictStale) && !conflict.LocalTombstone {
+			source, sourceErr := s.store.LoadCardDAVConflictReviewSourceContext(operationCtx, conflict.ID)
+			if sourceErr != nil {
+				if errors.Is(sourceErr, store.ErrCardDAVConflictStale) || errors.Is(sourceErr, store.ErrCardDAVConflictNotFound) ||
+					errors.Is(sourceErr, store.ErrCardDAVResourceNotFound) || errors.Is(sourceErr, store.ErrPersonNotFound) ||
+					errors.Is(sourceErr, store.ErrVCardResourceNotFound) || errors.Is(sourceErr, store.ErrCardDAVNoWriteTarget) {
+					return err
+				}
+				return sourceErr
+			}
+			if source.Resource.MappingRevision == conflict.MappingRevision && source.Conflict.MappingRevision == conflict.MappingRevision &&
+				source.Conflict.ReviewRevision == conflict.ReviewRevision && source.Snapshot.Fingerprint != conflict.LocalHash &&
+				(source.Publication == nil || source.Publication.PendingOperation == "") {
+				if refreshErr := s.recaptureConflictComparison(operationCtx, source, remote, tombstone); refreshErr != nil {
+					return refreshErr
+				}
+			}
+			return err
+		}
 		if err != nil {
 			return err
 		}
@@ -364,6 +383,22 @@ func (s *Service) prepareMappingConflict(
 	return capture, true, nil
 }
 
+func (s *Service) recaptureConflictComparison(
+	ctx context.Context, source *store.CardDAVPublicationReviewSource, remote store.CardDAVRemoteResource, tombstone bool,
+) error {
+	if id := conflictGuardPersonID(ctx); id != 0 && source.Person.ID != id {
+		return store.ErrCardDAVReviewStale
+	}
+	capture, needed, err := s.prepareMappingConflict(ctx, source.Book, *source.Resource, &remote, tombstone)
+	if err != nil {
+		return err
+	}
+	if needed {
+		_, err = s.store.RecordCardDAVConflictContext(ctx, capture)
+	}
+	return err
+}
+
 func (s *Service) resolveConflictKeepLocal(
 	ctx context.Context, conflict *store.CardDAVConflict,
 ) error {
@@ -432,14 +467,8 @@ func (s *Service) resolveConflictKeepLocal(
 			return store.ErrCardDAVReviewStale
 		}
 		if source.Publication == nil || source.Publication.PendingOperation == "" {
-			capture, needed, err := s.prepareMappingConflict(operationCtx, source.Book, *source.Resource, &remote, tombstone)
-			if err != nil {
+			if err := s.recaptureConflictComparison(operationCtx, source, remote, tombstone); err != nil {
 				return err
-			}
-			if needed {
-				if _, err := s.store.RecordCardDAVConflictContext(operationCtx, capture); err != nil {
-					return err
-				}
 			}
 			return store.ErrCardDAVReviewStale
 		}
