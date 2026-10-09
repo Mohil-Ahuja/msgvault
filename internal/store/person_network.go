@@ -255,7 +255,7 @@ func (s *Store) personNetworkLayerSourcesQuery(
 	}
 	relationshipFilter, employmentFilter := "TRUE", "TRUE"
 	if !includeEnded {
-		relationshipFilter = "relationship.end_year IS NULL"
+		relationshipFilter = "relationship.end_year IS NULL AND relationship.superseded_at IS NULL"
 		employmentFilter = s.dialect.BoolTrueExpr("employment.is_current")
 	}
 	if ids := seen["relationship"]; len(ids) > 0 {

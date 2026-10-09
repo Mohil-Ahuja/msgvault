@@ -431,7 +431,7 @@ func (s *Store) activePersonRelationshipTx(ctx context.Context, tx *loggedTx, so
 	edge, err := scanPersonRelationship(tx.QueryRowContext(ctx,
 		`SELECT `+personRelationshipColumns+personRelationshipFrom+`
 		 WHERE r.source_person_id = ? AND r.target_person_id = ?
-		   AND r.relationship_type_id = ? AND r.end_year IS NULL`,
+		   AND r.relationship_type_id = ? AND r.end_year IS NULL AND r.superseded_at IS NULL`,
 		canonicalSource, canonicalTarget, relationshipType.ID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrPersonRelationshipNotFound

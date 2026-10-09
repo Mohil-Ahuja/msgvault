@@ -1615,7 +1615,7 @@ func (s *Store) reconcilePersonRelationshipsTx(
 	*projectionIDs = append(*projectionIDs, reviewOwnerIDs...)
 	rows, err := tx.QueryContext(ctx, `SELECT
 		r.id, r.source_person_id, r.target_person_id, r.relationship_type_id,
-		r.end_year, t.is_symmetric
+		r.end_year, r.superseded_at, t.is_symmetric
 		FROM person_relationships r
 		JOIN relationship_types t ON t.id = r.relationship_type_id
 		WHERE r.source_person_id = ? OR r.target_person_id = ?
@@ -1626,6 +1626,7 @@ func (s *Store) reconcilePersonRelationshipsTx(
 	type relationshipMove struct {
 		id, sourceID, targetID, typeID int64
 		endYear                        sql.NullInt64
+		supersededAt                   sql.NullTime
 		symmetric                      bool
 	}
 	moves := []relationshipMove{}
@@ -1633,7 +1634,7 @@ func (s *Store) reconcilePersonRelationshipsTx(
 		var move relationshipMove
 		if err := rows.Scan(
 			&move.id, &move.sourceID, &move.targetID, &move.typeID,
-			&move.endYear, &move.symmetric,
+			&move.endYear, &move.supersededAt, &move.symmetric,
 		); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan absorbed person relationship: %w", err)
@@ -1689,10 +1690,10 @@ func (s *Store) reconcilePersonRelationshipsTx(
 		}
 
 		var duplicateID int64
-		if !move.endYear.Valid {
+		if !move.endYear.Valid && !move.supersededAt.Valid {
 			err = tx.QueryRowContext(ctx, `SELECT id FROM person_relationships
 				WHERE id <> ? AND source_person_id = ? AND target_person_id = ?
-				  AND relationship_type_id = ? AND end_year IS NULL
+				  AND relationship_type_id = ? AND end_year IS NULL AND superseded_at IS NULL
 				ORDER BY id LIMIT 1`, move.id, sourceID, targetID, move.typeID).Scan(&duplicateID)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("find duplicate person relationship: %w", err)

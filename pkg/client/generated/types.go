@@ -1666,6 +1666,7 @@ func (c CardDAVConnectionsResponse) Validate() error {
 type CardDAVContactSummaryResponse struct {
 	DisplayName *string                            `json:"display_name,omitzero"`
 	Emails      []string                           `json:"emails" validate:"required"`
+	Fields      []ContactField                     `json:"fields,omitempty"`
 	Phones      []string                           `json:"phones" validate:"required"`
 	State       CardDAVContactSummaryResponseState `json:"state" validate:"required"`
 	Truncated   *bool                              `json:"truncated,omitempty"`
@@ -1675,6 +1676,13 @@ func (c CardDAVContactSummaryResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(c.Emails, "required"); err != nil {
 		errors = errors.Append("Emails", err)
+	}
+	for i, item := range c.Fields {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Fields[%d]", i), err)
+			}
+		}
 	}
 	if err := typesValidator.Var(c.Phones, "required"); err != nil {
 		errors = errors.Append("Phones", err)
@@ -2585,6 +2593,16 @@ func (c ConnectionSyncOutcome) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ContactField struct {
+	Labels []string `json:"labels" validate:"required"`
+	Name   string   `json:"name" validate:"required"`
+	Value  string   `json:"value" validate:"required"`
+}
+
+func (c ContactField) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type ContactState struct {
@@ -10945,6 +10963,7 @@ type PersonRelationship struct {
 	SourceResourceUID  *string       `json:"source_resource_uid,omitzero"`
 	StartDate          *PartialDate  `json:"start_date,omitempty"`
 	Status             string        `json:"status" validate:"required"`
+	SupersededAt       *time.Time    `json:"superseded_at,omitempty"`
 	TargetPersonID     int64         `json:"target_person_id"`
 	TypeSlug           string        `json:"type_slug" validate:"required"`
 	UpdatedAt          time.Time     `json:"updated_at" validate:"required"`

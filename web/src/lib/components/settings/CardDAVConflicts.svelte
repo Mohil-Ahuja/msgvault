@@ -21,6 +21,36 @@
   let handledFocusKey = 0;
   let focusContext = 0;
 
+  const fieldLabels: Record<string, string> = {
+    FN: 'Display name', N: 'Structured name', EMAIL: 'Email address', TEL: 'Phone number',
+    ADR: 'Address', ORG: 'Organization', TITLE: 'Job title', ROLE: 'Role',
+    BDAY: 'Birthday', ANNIVERSARY: 'Anniversary', CATEGORIES: 'Categories',
+    NOTE: 'Notes', RELATED: 'Relationship', URL: 'Website', PHOTO: 'Photo'
+  };
+
+  function fieldValue(name: string, value: string): string {
+    return ['ADR', 'N', 'ORG'].includes(name)
+      ? value.split(';').map(part => part.trim()).filter(Boolean).join(', ')
+      : value;
+  }
+
+  function fieldLabel(label: string): string {
+    const separator = label.indexOf('=');
+    if (separator < 0) return label;
+    const name = label.slice(0, separator);
+    const value = label.slice(separator + 1);
+    if (name === 'TYPE' || name === 'LABEL') return value;
+    const names: Record<string, string> = {
+      PREF: 'Preference', LANGUAGE: 'Language', SCRIPT: 'Script', PHONETIC: 'Phonetic',
+      'SORT-AS': 'Sort as', GEO: 'Coordinates', TZ: 'Time zone', CC: 'Country code'
+    };
+    return `${names[name] ?? name}: ${value}`;
+  }
+
+  function unlabeledValues(summary: CardDAVConflictSummary, name: string, values: string[]): string[] {
+    return values.filter(value => !summary.fields?.some(field => field.name === name && field.value === value));
+  }
+
   const comparisonCards = $derived(controller.selectedDetail ? [
     { label: 'Base', summary: controller.selectedDetail.base },
     { label: 'Local', summary: controller.selectedDetail.local },
@@ -132,7 +162,7 @@
 
 <SettingsSection
   title="CardDAV conflicts"
-  description="Review unresolved whole-card conflicts using bounded contact summaries."
+  description="Resolve competing contact edits."
 >
   <div bind:this={conflictSurface} class="conflict-surface" onfocusin={rememberSurfaceFocus} onfocusout={forgetSurfaceFocus}>
     {#if controller.unavailable}
@@ -188,7 +218,7 @@
 
     <section class="detail-panel" aria-labelledby="carddav-conflict-detail-heading">
       <h3 bind:this={detailHeading} id="carddav-conflict-detail-heading" tabindex="-1">Conflict comparison</h3>
-      <p class="disclosure">Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.</p>
+      <p class="disclosure">The comparison includes contact values, labels and profile addresses. Your choice applies to the whole card.</p>
 
       {#if controller.detailLoading && !controller.selectedDetail}
         <p class="working" aria-busy="true"><Spinner size={14} label="Loading CardDAV conflict details" /> Loading conflict details…</p>
@@ -213,29 +243,40 @@
         {@const selected = controller.selectedDetail}
         <div class="comparison" role="region" aria-label={`CardDAV conflict ${selected.id} comparison`} aria-busy={controller.detailLoading || controller.pendingResolutionID === selected.id}>
           {#each comparisonCards as card (card.label)}
+            {@const emails = unlabeledValues(card.summary, 'EMAIL', card.summary.emails)}
+            {@const phones = unlabeledValues(card.summary, 'TEL', card.summary.phones)}
             <Card level="default" padding="sm" class="comparison-card" ariaLabel={`${card.label} card summary`}>
               <div class="summary">
                 <h4>{card.label}</h4>
                 {#if card.summary.state === 'present'}
                   <p class="state-text">Present</p>
                   <dl>
-                    <div><dt>Display name</dt><dd>{card.summary.display_name || 'No display name'}</dd></div>
+                    {#if !card.summary.fields?.some(field => field.name === 'FN' && field.value === card.summary.display_name)}
+                      <div><dt>Display name</dt><dd>{card.summary.display_name || 'No display name'}</dd></div>
+                    {/if}
+                    {#if emails.length > 0 || card.summary.emails.length === 0}
                     <div>
                       <dt>Email addresses</dt>
                       <dd>
                         {#if card.summary.emails.length === 0}<span>No email addresses</span>
-                        {:else}<ul>{#each card.summary.emails as email}<li>{email}</li>{/each}</ul>{/if}
+                        {:else}<ul>{#each emails as email}<li>{email}</li>{/each}</ul>{/if}
                       </dd>
                     </div>
+                    {/if}
+                    {#if phones.length > 0 || card.summary.phones.length === 0}
                     <div>
                       <dt>Phone numbers</dt>
                       <dd>
                         {#if card.summary.phones.length === 0}<span>No phone numbers</span>
-                        {:else}<ul>{#each card.summary.phones as phone}<li>{phone}</li>{/each}</ul>{/if}
+                        {:else}<ul>{#each phones as phone}<li>{phone}</li>{/each}</ul>{/if}
                       </dd>
                     </div>
+                    {/if}
+                    {#each card.summary.fields ?? [] as field}
+                      <div><dt>{fieldLabels[field.name] ?? field.name}</dt><dd>{fieldValue(field.name, field.value)}{#if field.labels.length}<span class="field-labels">{field.labels.map(fieldLabel).join(', ')}</span>{/if}</dd></div>
+                    {/each}
                   </dl>
-                  {#if card.summary.truncated}<p class="truncated">Additional name, email, or phone values are not shown.</p>{/if}
+                  {#if card.summary.truncated}<p class="truncated">More values are omitted.</p>{/if}
                 {:else if card.summary.state === 'deleted'}
                   <p class="state-text">Deleted. This side is a deletion tombstone.</p>
                 {:else}
@@ -305,6 +346,7 @@
   .summary, .summary dd, .summary li { overflow-wrap: anywhere; word-break: break-word; }
   .summary dl { display: grid; gap: var(--space-3); }
   .summary dl > div { display: grid; gap: var(--space-1); }
+  .field-labels { display: block; color: var(--text-muted); font-size: var(--font-size-xs); }
   .summary dt { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold, 600); }
   .summary ul { margin: 0; padding-left: var(--space-5); }
   .state-text { color: var(--text-primary); font-weight: var(--font-weight-semibold, 600); }

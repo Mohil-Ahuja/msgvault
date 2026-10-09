@@ -167,6 +167,7 @@ export * from "./confidenceInputs";
 export * from "./connectionSyncOutcome";
 export * from "./connectionSyncOutcomeStatus";
 export * from "./consentSettingsPeopleInferenceProviderPathParameters";
+export * from "./contactField";
 export * from "./contactState";
 export * from "./conversationResponse";
 export * from "./createAttributeDefinitionRequest";

@@ -2626,6 +2626,7 @@ CREATE TABLE IF NOT EXISTS person_relationships (
     end_year             INTEGER,
     end_month            INTEGER,
     end_day              INTEGER,
+    superseded_at        DATETIME,
     status               TEXT NOT NULL DEFAULT 'active',
     notes                TEXT,
     source               TEXT NOT NULL DEFAULT 'user',
@@ -2657,24 +2658,24 @@ CREATE TABLE IF NOT EXISTS person_relationships (
            AND source NOT IN ('user', 'carddav_import', 'vcard_import')))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_person_relationships_active_unique
+CREATE UNIQUE INDEX IF NOT EXISTS idx_person_relationships_active_unique_v2
     ON person_relationships(source_person_id, target_person_id, relationship_type_id)
-    WHERE end_year IS NULL;
+    WHERE end_year IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_relationships_source
     ON person_relationships(source_person_id);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_target
     ON person_relationships(target_person_id);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_target_active
     ON person_relationships(target_person_id, relationship_type_id)
-    WHERE end_year IS NULL;
+    WHERE end_year IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_relationships_source_edge
     ON person_relationships(source_person_id, id);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_target_edge
     ON person_relationships(target_person_id, id);
 CREATE INDEX IF NOT EXISTS idx_person_relationships_source_current_edge
-    ON person_relationships(source_person_id, id) WHERE end_year IS NULL;
+    ON person_relationships(source_person_id, id) WHERE end_year IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_relationships_target_current_edge
-    ON person_relationships(target_person_id, id) WHERE end_year IS NULL;
+    ON person_relationships(target_person_id, id) WHERE end_year IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_person_relationships_type
     ON person_relationships(relationship_type_id);
 

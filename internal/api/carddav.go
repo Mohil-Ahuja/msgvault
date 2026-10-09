@@ -752,6 +752,7 @@ type CardDAVContactSummaryResponse struct {
 	DisplayName string                    `json:"display_name,omitempty"`
 	Emails      []string                  `json:"emails"`
 	Phones      []string                  `json:"phones"`
+	Fields      []carddav.ContactField    `json:"fields,omitempty"`
 	Truncated   bool                      `json:"truncated,omitzero"`
 }
 type CardDAVConflictResponse struct {
@@ -1569,7 +1570,7 @@ func conflictResponse(c carddav.ConflictListItem) CardDAVConflictResponse {
 func contactSummaryResponse(summary carddav.ContactSummary) CardDAVContactSummaryResponse {
 	return CardDAVContactSummaryResponse{
 		State: summary.State, DisplayName: summary.DisplayName, Emails: summary.Emails,
-		Phones: summary.Phones, Truncated: summary.Truncated,
+		Phones: summary.Phones, Fields: summary.Fields, Truncated: summary.Truncated,
 	}
 }
 func conflictDetailResponse(c carddav.ConflictDetail) CardDAVConflictDetailResponse {

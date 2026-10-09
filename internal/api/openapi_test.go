@@ -1416,6 +1416,7 @@ func TestOpenAPICardDAVConflictArraysAreRequiredAndNonNull(t *testing.T) {
 	}{
 		{schema: "CardDAVContactSummaryResponse", property: "emails"},
 		{schema: "CardDAVContactSummaryResponse", property: "phones"},
+		{schema: "ContactField", property: "labels"},
 		{schema: "CardDAVConflictResponse", property: "allowed_resolutions"},
 		{schema: "CardDAVConflictDetailResponse", property: "allowed_resolutions"},
 		{schema: "CardDAVConflictsResponse", property: "conflicts"},

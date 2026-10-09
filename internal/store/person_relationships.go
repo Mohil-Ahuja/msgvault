@@ -61,6 +61,7 @@ type PersonRelationship struct {
 	VCardIdentity      VCardIdentity      `json:"vcard_identity"`
 	CreatedBy          string             `json:"created_by"`
 	UpdatedBy          string             `json:"updated_by"`
+	SupersededAt       *time.Time         `json:"superseded_at,omitzero" nullable:"false"`
 	Revision           int64              `json:"revision"`
 	CreatedAt          time.Time          `json:"created_at"`
 	UpdatedAt          time.Time          `json:"updated_at"`
@@ -100,7 +101,7 @@ const personRelationshipColumns = `
 	r.end_year, r.end_month, r.end_day, r.status, r.notes,
 	r.source, r.source_ref, r.source_resource_uid, r.confidence,
 	r.vcard_property, r.vcard_group, r.vcard_prop_id, r.vcard_pid, r.vcard_altid,
-	r.created_by, r.updated_by, r.revision, r.created_at, r.updated_at
+	r.created_by, r.updated_by, r.revision, r.created_at, r.updated_at, r.superseded_at
 `
 
 const personRelationshipFrom = `
@@ -543,6 +544,7 @@ type personRelationshipScan struct {
 	endYear           sql.NullInt64
 	endMonth          sql.NullInt64
 	endDay            sql.NullInt64
+	supersededAt      sql.NullTime
 	status            string
 	notes             sql.NullString
 	source            string
@@ -566,12 +568,15 @@ func (scan *personRelationshipScan) destinations() []any {
 		&scan.startYear, &scan.startMonth, &scan.startDay, &scan.endYear, &scan.endMonth, &scan.endDay, &scan.status, &scan.notes,
 		&scan.source, &scan.sourceRef, &scan.sourceResourceUID, &scan.confidence,
 		&scan.property, &scan.group, &scan.propID, &scan.pid, &scan.altID,
-		&scan.edge.CreatedBy, &scan.edge.UpdatedBy, &scan.edge.Revision, &scan.edge.CreatedAt, &scan.edge.UpdatedAt,
+		&scan.edge.CreatedBy, &scan.edge.UpdatedBy, &scan.edge.Revision, &scan.edge.CreatedAt, &scan.edge.UpdatedAt, &scan.supersededAt,
 	}
 }
 
 func (scan *personRelationshipScan) relationship() PersonRelationship {
 	edge := scan.edge
+	if scan.supersededAt.Valid {
+		edge.SupersededAt = &scan.supersededAt.Time
+	}
 	if scan.startYear.Valid {
 		value := ScanPartialDate(scan.startYear, scan.startMonth, scan.startDay)
 		edge.StartDate = &value
@@ -648,7 +653,7 @@ func (s *Store) listPersonRelationshipsContext(
 ) ([]PersonRelationshipView, error) {
 	currentFilter := ""
 	if !opts.IncludeEnded {
-		currentFilter = " AND r.end_year IS NULL"
+		currentFilter = " AND r.end_year IS NULL AND r.superseded_at IS NULL"
 	}
 	query := `
 		SELECT ` + personRelationshipColumns + `,
@@ -664,7 +669,7 @@ func (s *Store) listPersonRelationshipsContext(
 		                                THEN r.target_person_id
 		                                ELSE r.source_person_id END
 		WHERE (r.source_person_id = ? OR r.target_person_id = ?)` + currentFilter + `
-		ORDER BY CASE WHEN r.end_year IS NULL THEN 0 ELSE 1 END,
+		ORDER BY CASE WHEN r.end_year IS NULL AND r.superseded_at IS NULL THEN 0 ELSE 1 END,
 		         LOWER(COALESCE(cp.display_name, cp.vcard_uid)),
 		         t.slug, r.id
 	`
@@ -715,4 +720,24 @@ func scanPersonRelationshipView(row scanner) (*PersonRelationshipView, error) {
 		view.CounterpartDisplayName = &displayName.String
 	}
 	return &view, nil
+}
+
+func (s *Store) supersedePersonRelationshipTx(ctx context.Context, tx *loggedTx, edge *PersonRelationship) error {
+	if edge.SupersededAt != nil {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE person_relationships
+		SET superseded_at = `+s.dialect.Now()+`, updated_at = `+s.dialect.Now()+`, updated_by = ?, revision = revision + 1
+		WHERE id = ? AND revision = ? AND superseded_at IS NULL`, string(ProvenanceUser), edge.ID, edge.Revision)
+	if err != nil {
+		return fmt.Errorf("supersede relationship: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return s.personRelationshipCASMissTx(ctx, tx, edge.ID)
+	}
+	return s.bumpPersonVCardProjectionsTx(ctx, tx, edge.SourcePersonID, edge.TargetPersonID)
 }

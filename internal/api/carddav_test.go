@@ -1215,7 +1215,7 @@ func (f cardDAVListFixture) GetConflictView(context.Context, int64) (*carddav.Co
 		ID: f.conflict.ID, AddressBook: carddav.AddressBookIdentity{ID: f.conflict.AddressBookID, Name: "Personal"},
 		Status:             f.conflict.Status,
 		Base:               carddav.ContactSummary{State: carddav.ConflictSideUnavailable, Emails: []string{}, Phones: []string{}},
-		Local:              carddav.ContactSummary{State: carddav.ConflictSidePresent, DisplayName: "Alice Local", Emails: []string{}, Phones: []string{}},
+		Local:              carddav.ContactSummary{State: carddav.ConflictSidePresent, DisplayName: "Alice Local", Emails: []string{}, Phones: []string{}, Fields: []carddav.ContactField{{Name: "ADR", Value: "123 Example Street", Labels: []string{"TYPE=home"}}}},
 		Remote:             carddav.ContactSummary{State: carddav.ConflictSidePresent, DisplayName: "Alice Remote", Emails: []string{}, Phones: []string{}},
 		AllowedResolutions: []carddav.ResolutionChoice{carddav.ResolutionKeepLocal, carddav.ResolutionKeepRemote},
 	}, nil
@@ -1253,6 +1253,7 @@ func TestCardDAVConflictDetailExposesOnlyRequestedSnapshots(t *testing.T) {
 		"/api/v1/carddav/conflicts/7", "")
 
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+	assert.Contains(resp.Body.String(), `"fields":[{"name":"ADR","value":"123 Example Street","labels":["TYPE=home"]}]`)
 	assert.Contains(resp.Body.String(), "Alice Local")
 	assert.Contains(resp.Body.String(), "Alice Remote")
 	assert.NotContains(resp.Body.String(), "href")

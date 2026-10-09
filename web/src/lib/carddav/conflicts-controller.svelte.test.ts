@@ -78,7 +78,7 @@ describe('CardDAVConflictsController', () => {
       if (path === '/api/v1/carddav/conflicts') {
         return Response.json({ conflicts: [listItem(41)] });
       }
-      if (path === '/api/v1/carddav/conflicts/41') return Response.json(detail(41));
+      if (path === '/api/v1/carddav/conflicts/41') return Response.json(detail(41, { base: summary('present', { display_name: 'Synthetic Base', emails: ['base@example.test'], fields: [{ name: 'EMAIL', value: 'base@example.test', labels: ['TYPE=home'], ...forbiddenMarkers }] }) }));
       throw new Error(`Unexpected GET ${path}`);
     });
     const controller = new CardDAVConflictsController(createAPIClient(fetchFn));
@@ -100,7 +100,7 @@ describe('CardDAVConflictsController', () => {
       id: 41,
       address_book: { id: 7, name: 'Synthetic contacts' },
       status: 'unresolved',
-      base: { state: 'present', display_name: 'Synthetic Base', emails: ['base@example.test'], phones: [] },
+      base: { state: 'present', display_name: 'Synthetic Base', emails: ['base@example.test'], phones: [], fields: [{ name: 'EMAIL', value: 'base@example.test', labels: ['TYPE=home'] }] },
       local: { state: 'present', display_name: 'Synthetic Local', emails: [], phones: ['+1 555 0100'] },
       remote: { state: 'deleted', emails: [], phones: [] },
       allowed_resolutions: ['keep_local', 'keep_remote'],

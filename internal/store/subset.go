@@ -2036,6 +2036,10 @@ func copySubsetRelationships(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	edgeSupersededAt, err := sourceColumnExpression(tx, personRelationshipsTableName, "superseded_at", "edge")
+	if err != nil {
+		return err
+	}
 	reviewResourceUID, err := sourceColumnExpression(
 		tx, "person_relationship_reviews", "source_resource_uid", "review")
 	if err != nil {
@@ -2047,7 +2051,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    start_year, start_month, start_day, end_year, end_month, end_day,
 		    status, notes, source, source_ref, source_resource_uid, confidence,
 		    vcard_property, vcard_group, vcard_prop_id, vcard_pid, vcard_altid,
-		    created_by, updated_by, revision, created_at, updated_at
+		    created_by, updated_by, revision, created_at, updated_at, superseded_at
 		)
 		SELECT
 		    edge.id, edge.source_person_id, edge.target_person_id,
@@ -2059,7 +2063,7 @@ func copySubsetRelationships(tx *sql.Tx) error {
 		    edge.vcard_property, edge.vcard_group, edge.vcard_prop_id,
 		    edge.vcard_pid, edge.vcard_altid,
 		    edge.created_by, edge.updated_by, edge.revision,
-		    edge.created_at, edge.updated_at
+		    edge.created_at, edge.updated_at, ` + edgeSupersededAt + `
 		FROM src.person_relationships edge
 		JOIN src.relationship_types source_type
 		  ON source_type.id = edge.relationship_type_id

@@ -1,6 +1,7 @@
 package carddav
 
 import (
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -23,11 +24,18 @@ const (
 	ConflictSideUnavailable ConflictSideState = "unavailable"
 )
 
+type ContactField struct {
+	Name   string   `json:"name"`
+	Value  string   `json:"value"`
+	Labels []string `json:"labels"`
+}
+
 type ContactSummary struct {
 	State       ConflictSideState `json:"state"`
 	DisplayName string            `json:"display_name,omitempty"`
 	Emails      []string          `json:"emails"`
 	Phones      []string          `json:"phones"`
+	Fields      []ContactField    `json:"fields,omitempty"`
 	Truncated   bool              `json:"truncated,omitzero"`
 }
 
@@ -84,7 +92,9 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 	for _, occurrence := range envelope.PropertyTree {
 		property := occurrence.Property
 		name := strings.ToUpper(property.Name)
-		if name != "FN" && name != "EMAIL" && name != "TEL" {
+		switch name {
+		case "FN", "EMAIL", "TEL", "ADR", "N", "ORG", "TITLE", "ROLE", "BDAY", "ANNIVERSARY", "CATEGORIES":
+		default:
 			continue
 		}
 		value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
@@ -93,13 +103,40 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 		}
 		switch name {
 		case "EMAIL":
-			value = trimPrefixFold(strings.TrimSpace(value), "mailto:")
+			value = vcard.TrimPrefixFold(strings.TrimSpace(value), "mailto:")
 		case "TEL":
-			value = trimPrefixFold(strings.TrimSpace(value), "tel:")
+			value = vcard.TrimPrefixFold(strings.TrimSpace(value), "tel:")
 		}
 		value = normalizePublicCardDAVText(value)
 		if value == "" {
 			continue
+		}
+		labels := []string{}
+		for _, parameter := range property.Parameters {
+			paramName := strings.ToUpper(parameter.Name)
+			switch paramName {
+			case "TYPE", "PREF", "LABEL", "LANGUAGE", "SCRIPT", "PHONETIC", "SORT-AS", "GEO", "TZ", "CC":
+			default:
+				continue
+			}
+			for _, paramValue := range parameter.Values {
+				if len(labels) == maxPublicContactValues {
+					summary.Truncated = true
+					break
+				}
+				label, clipped := capPublicCardDAVText(normalizePublicCardDAVText(paramName + "=" + paramValue.Decoded))
+				summary.Truncated = summary.Truncated || clipped
+				labels = append(labels, label)
+			}
+		}
+		if len(labels) > 0 || (name != "FN" && name != "EMAIL" && name != "TEL") {
+			if len(summary.Fields) < maxPublicContactValues {
+				fieldValue, clipped := capPublicCardDAVText(value)
+				summary.Truncated = summary.Truncated || clipped
+				summary.Fields = append(summary.Fields, ContactField{Name: name, Value: fieldValue, Labels: labels})
+			} else {
+				summary.Truncated = true
+			}
 		}
 		if name == "FN" && summary.DisplayName != "" {
 			continue
@@ -162,4 +199,45 @@ func capPublicCardDAVText(value string) (string, bool) {
 		end--
 	}
 	return value[:end], true
+}
+
+func projectConflictHiddenDifferences(localBody, remoteBody []byte, local, remote *ContactSummary) {
+	if local.State != ConflictSidePresent || remote.State != ConflictSidePresent {
+		return
+	}
+	localEnvelope, err := vcard.ParseResourceEnvelope(localBody)
+	if err != nil {
+		return
+	}
+	remoteEnvelope, err := vcard.ParseResourceEnvelope(remoteBody)
+	if err != nil {
+		return
+	}
+	properties := func(envelope vcard.ResourceEnvelope, name string) []vcard.SemanticProperty {
+		values := []vcard.SemanticProperty{}
+		for _, occurrence := range envelope.PropertyTree {
+			if strings.EqualFold(occurrence.Property.Name, name) {
+				values = append(values, vcard.NormalizeSemanticProperty(envelope.RenderMetadata.StoredVersion, occurrence.Property))
+			}
+		}
+		slices.SortFunc(values, vcard.CompareSemanticProperties)
+		return values
+	}
+	for _, name := range []string{"NOTE", "RELATED", "URL", "PHOTO"} {
+		if slices.EqualFunc(properties(localEnvelope, name), properties(remoteEnvelope, name), func(a, b vcard.SemanticProperty) bool {
+			return vcard.CompareSemanticProperties(a, b) == 0
+		}) {
+			continue
+		}
+		for _, side := range []struct {
+			summary *ContactSummary
+			other   string
+		}{{local, "remote"}, {remote, "local"}} {
+			if len(side.summary.Fields) == maxPublicContactValues {
+				side.summary.Truncated = true
+				continue
+			}
+			side.summary.Fields = append(side.summary.Fields, ContactField{Name: name, Value: "Contents hidden", Labels: []string{"Differs from " + side.other}})
+		}
+	}
 }

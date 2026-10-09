@@ -168,7 +168,7 @@ func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.
 			"base": map[string]any{"state": "unavailable", "emails": []string{}, "phones": []string{}},
 			"local": map[string]any{
 				"state": "present", "display_name": "Local Alice",
-				"emails": []string{"local@example.test"}, "phones": []string{"+12025550123"},
+				"emails": []string{"local@example.test"}, "phones": []string{"+12025550123"}, "fields": []map[string]any{{"name": "EMAIL", "value": "local@example.test", "labels": []string{"TYPE=home"}}},
 			},
 			"remote":              map[string]any{"state": "deleted", "emails": []string{}, "phones": []string{}},
 			"allowed_resolutions": []string{},
@@ -198,7 +198,7 @@ func TestCardDAVConflictShowPrintsSafeSummariesWithoutRawVCardFields(t *testing.
 		"status":"resolved",
 		"resolution":"keep_remote",
 		"base":{"state":"unavailable","emails":[],"phones":[]},
-		"local":{"state":"present","display_name":"Local Alice","emails":["local@example.test"],"phones":["+12025550123"]},
+		"local":{"state":"present","display_name":"Local Alice","emails":["local@example.test"],"phones":["+12025550123"],"fields":[{"name":"EMAIL","value":"local@example.test","labels":["TYPE=home"]}]},
 		"remote":{"state":"deleted","emails":[],"phones":[]},
 		"allowed_resolutions":[],
 		"created_at":"2026-08-28T09:10:11Z",

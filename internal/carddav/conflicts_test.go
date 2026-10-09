@@ -2,6 +2,8 @@ package carddav
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +15,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
 func conflictCard(uid, name string) []byte {
-	return []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + uid + "\r\nFN:" + name + "\r\nEND:VCARD\r\n")
+	return conflictCardWithEmail(uid, name)
 }
 
 func conflictCardWithEmail(uid, name string, emails ...string) []byte {
@@ -1707,8 +1710,9 @@ func TestRemoteDeleteOfPublishedImportStopsPublishing(t *testing.T) {
 	puts := fixture.puts
 
 	fixture.setRemote(nil, "")
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	result, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
+	assert.Equal(1, result.Removed)
 	require.NoError(service.ReconcilePublications(t.Context()))
 
 	assert.Equal(puts, fixture.puts, "a deleted card must not be recreated without its residue")
@@ -2233,6 +2237,7 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 				for _, slug := range []string{"friend", "neighbor"} {
 					_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
 						SourcePersonID: personID, TargetPersonID: targetID, TypeSlug: slug, Source: store.ProvenanceUser, Actor: "user",
+						StartDate: &store.PartialDate{Year: new(2020)}, Notes: new("Private relationship note"),
 					})
 					require.NoError(err)
 				}
@@ -2298,6 +2303,17 @@ func TestCardDAVKeepRemotePreservesAcceptedOccurrences(t *testing.T) {
 				require.NoError(err)
 				require.Len(relationships, 1)
 				assert.Equal("neighbor", relationships[0].Relationship.TypeSlug)
+				history, err := st.ListPersonRelationshipsContext(t.Context(), personID, store.PersonRelationshipListOptions{IncludeEnded: true})
+				require.NoError(err)
+				require.Len(history, 2)
+				for _, view := range history {
+					assert.Equal(new("Private relationship note"), view.Relationship.Notes)
+					assert.Equal(&store.PartialDate{Year: new(2020)}, view.Relationship.StartDate)
+					assert.Nil(view.Relationship.EndDate)
+					if view.Relationship.TypeSlug == "friend" {
+						assert.NotNil(view.Relationship.SupersededAt)
+					}
+				}
 			case "FN SORT-AS":
 				names, err := st.ListPersonNamesContext(t.Context(), personID, true)
 				require.NoError(err)
@@ -2541,7 +2557,8 @@ func TestCardDAVFirstImportKeepsBothEmails(t *testing.T) {
 	assert.ElementsMatch(t, []string{"e1@example.test", "e2@example.test"}, []string{points[0].OriginalValue, points[1].OriginalValue})
 }
 
-func TestRemoteEditToPublishedContactAfterCrossBookImportDelete(t *testing.T) {
+func publishedCrossBookImportFixture(t *testing.T) (*conflictMutationServer, *Service, *store.Store, []store.CardDAVAddressBook, int64, *store.CardDAVResource, *[]byte) {
+	t.Helper()
 	require := require.New(t)
 	fixture := &conflictMutationServer{}
 	importBody := conflictCardWithEmail("person", "Alice Example", "e1@example.test")
@@ -2580,9 +2597,15 @@ func TestRemoteEditToPublishedContactAfterCrossBookImportDelete(t *testing.T) {
 	require.NoError(err)
 	require.Equal(imported.PersonID, duplicate.PersonID)
 	require.NoError(service.PublishPerson(t.Context(), personID))
+	return fixture, service, st, books, personID, duplicate, &importBody
+}
+
+func TestRemoteEditToPublishedContactAfterCrossBookImportDelete(t *testing.T) {
+	require := require.New(t)
+	fixture, service, st, books, personID, duplicate, importBody := publishedCrossBookImportFixture(t)
 	puts := fixture.puts
-	importBody = nil
-	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	*importBody = nil
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
 	require.NoError(err)
 	duplicate, err = st.GetCardDAVResourceContext(t.Context(), books[0].ID, duplicate.Href)
 	require.NoError(err)
@@ -2694,6 +2717,163 @@ func TestRemoteNameReorderWithEmailEditPreservesBothNames(t *testing.T) {
 			assert.Contains(body, "edited@example.test")
 			assert.NotContains(body, "e1@example.test")
 			assert.Contains(body, "unrelated@example.test")
+		})
+	}
+}
+
+func TestKeepRemoteDecisionSurvivesAutomaticProfileUpdate(t *testing.T) {
+	for _, field := range []string{"NOTE", "TITLE"} {
+		t.Run(field, func(t *testing.T) {
+			fixture, service, st, personID := publishedImportFixture(t)
+			_, err := st.SetPersonTrackingContext(t.Context(), personID, true)
+			require.NoError(t, err)
+			slug, submitted, before := store.AttributeSlugNotes, `"Original inferred note"`, "NOTE:Original inferred note"
+			if field == "TITLE" {
+				organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+				require.NoError(t, err)
+				slug = "employment"
+				submitted = fmt.Sprintf(`{"organization":{"id":%d,"name":"Example Company"},"title":"Engineer","start_date":{"year":2020}}`, organization.ID)
+				before = "TITLE:Engineer"
+			}
+			seed := cardDAVFactGeneration(t, st, personID, slug, submitted, "seed-"+field)
+			result, err := st.ApplyPersonFactGenerationContext(t.Context(), seed, nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, result.Projections)
+			preview, err := service.PreviewPublication(t.Context(), personID)
+			require.NoError(t, err)
+			require.NoError(t, service.PublishReviewedPerson(t.Context(), personID, preview.ApprovalToken))
+			require.Contains(t, string(fixture.body), before)
+			after := field + ":Accepted remote value"
+			fixture.setRemote(bytes.Replace(fixture.body, []byte(before), []byte(after), 1), `"accepted"`)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(t, err)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(t, err)
+			require.Len(t, conflicts, 1)
+			require.NoError(t, service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+			later := cardDAVFactGeneration(t, st, personID, slug, submitted, "later-"+field)
+			result, err = st.ApplyPersonFactGenerationContext(t.Context(), later, nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, result.Decisions)
+			for _, decision := range result.Decisions {
+				assert.Equal(t, personfacts.ReasonPinRetained, decision.Reason)
+			}
+			require.NoError(t, service.ReconcilePublications(t.Context()))
+			assert.Contains(t, string(fixture.body), after)
+			assert.NotContains(t, string(fixture.body), before)
+		})
+	}
+}
+
+func cardDAVFactGeneration(t *testing.T, st *store.Store, personID int64, slug, submitted, suffix string) personfacts.GenerationInput {
+	t.Helper()
+	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
+	require.NoError(t, err)
+	var target personfacts.TargetDescriptor
+	for _, candidate := range catalog.Targets {
+		if candidate.Slug == slug {
+			target = candidate
+		}
+	}
+	require.NotEmpty(t, target.Key)
+	now := time.Now().UTC()
+	return personfacts.GenerationInput{
+		PersonID: personID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: suffix, End: suffix + "-end"}},
+		ProgramID: "carddav-regression", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "catalog-fixture",
+		Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now,
+		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "policy-v1", AllowSensitive: true},
+		Claims: []personfacts.ProposedClaim{{
+			Target: target, Relation: personfacts.RelationSupport, SubmittedValue: json.RawMessage(submitted),
+			Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900},
+			Evidence: []personfacts.EvidenceInput{{
+				PersonID: personID, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative,
+				SourceURL: "https://example.com/" + suffix, SubjectPersonID: &personID, SubjectRef: "synthetic-person", Excerpt: "Synthetic evidence " + suffix,
+				SourceVersion: "v1", EventTime: now.Add(-time.Hour), RecordedTime: now, IdentityScore: 990,
+			}},
+		}},
+	}
+}
+
+func TestKeepRemoteTitleWithExistingUntitledEmployment(t *testing.T) {
+	fixture, service, st, personID := publishedImportFixture(t)
+	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+	require.NoError(t, err)
+	_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(true)})
+	require.NoError(t, err)
+	untitled, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: personID, OrganizationID: organization.ID, Source: store.ProvenanceUser})
+	require.NoError(t, err)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("TITLE:Engineer"), []byte("TITLE:Architect"), 1), `"edited"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(t, err)
+	require.Len(t, conflicts, 1)
+	require.NoError(t, service.ResolveConflict(t.Context(), conflicts[0].ID, ResolutionKeepRemote))
+	kept, err := st.GetEmploymentContext(t.Context(), untitled.ID)
+	require.NoError(t, err)
+	assert.False(t, kept.IsCurrent)
+	assert.Nil(t, kept.Title)
+	require.NoError(t, service.ReconcilePublications(t.Context()))
+	assert.Contains(t, string(fixture.body), "TITLE:Architect")
+	assert.NotContains(t, string(fixture.body), "TITLE:Engineer")
+}
+
+func TestRemotePhoneStorageFormatEquivalentToPublishedCard(t *testing.T) {
+	fixture := &conflictMutationServer{body: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:person\r\nFN:Alice\r\nTEL;VALUE=text:+12025550101\r\nEND:VCARD\r\n"), etag: `"base"`}
+	server := httptest.NewServer(fixture.handler(t))
+	t.Cleanup(server.Close)
+	service, st, book := newPullService(t, server, false)
+	_, err := service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), book.ID, book.CanonicalURL+"person.vcf")
+	require.NoError(t, err)
+	require.NotNil(t, mapping.PersonID)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), *mapping.PersonID)
+	require.NoError(t, err)
+	publication, err := st.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{
+		PersonID: *mapping.PersonID, Desired: true, AddressBookID: book.ID, Href: mapping.Href,
+		OutgoingBody: fixture.body, OutgoingSemanticHash: mapping.RemoteSemanticHash, LocalHash: snapshot.Fingerprint,
+	})
+	require.NoError(t, err)
+	require.True(t, publication.Noop)
+	fixture.setRemote(bytes.Replace(fixture.body, []byte("TEL;VALUE=text:+12025550101"), []byte("TEL:tel:+12025550101"), 1), `"format-only"`)
+	_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+	require.NoError(t, err)
+	conflicts, err := service.ListConflicts(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
+}
+
+func TestRemoteDeleteRetainsPublishedPersonInBothCardOrders(t *testing.T) {
+	for _, publishedFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("published-first-%t", publishedFirst), func(t *testing.T) {
+			fixture, service, st, books, personID, _, importedBody := publishedCrossBookImportFixture(t)
+			names, err := st.ListPersonNamesContext(t.Context(), personID, false)
+			require.NoError(t, err)
+			for step := range 2 {
+				if (step == 0) == publishedFirst {
+					fixture.setRemote(nil, "")
+				} else {
+					*importedBody = nil
+				}
+				result, err := service.Sync(t.Context(), SyncOptions{Full: true})
+				require.NoError(t, err)
+				assert.Equal(t, 1, result.Removed)
+				require.NoError(t, service.ReconcilePublications(t.Context()))
+			}
+			_, err = st.GetPersonContext(t.Context(), personID)
+			require.NoError(t, err)
+			retained, err := st.ListPersonNamesContext(t.Context(), personID, false)
+			require.NoError(t, err)
+			assert.Equal(t, names, retained)
+			for _, book := range books {
+				resources, err := st.ListCardDAVResourcesContext(t.Context(), book.ID)
+				require.NoError(t, err)
+				assert.Empty(t, resources)
+			}
+			_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
+			assert.ErrorIs(t, err, store.ErrCardDAVPublicationNotFound)
 		})
 	}
 }

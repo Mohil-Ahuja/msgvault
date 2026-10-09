@@ -22,6 +22,7 @@ export interface PersonRelationship {
   source_resource_uid?: string;
   start_date?: PartialDate;
   status: string;
+  superseded_at?: string;
   target_person_id: number;
   type_slug: string;
   updated_at: string;

@@ -242,30 +242,34 @@ func (s *Store) SupersedePersonAttributeValueContext(
 	}
 	write, err := s.runAttributeWrite(ctx, "supersede person attribute value", input.DryRun,
 		func(tx *loggedTx, now time.Time) (*attributeValueWrite, error) {
-			if err := s.lockPersonFactAttributeTx(
-				ctx, tx, input.PersonID, input.DefinitionSlug); err != nil {
-				return nil, err
-			}
-			definition, err := s.getAttributeDefinitionBySlugTx(
-				ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
-			if err != nil {
-				return nil, err
-			}
-			closed, err := s.supersedeAttributeValueTx(ctx, tx, personAttributeOwner, *definition,
-				input.PersonID, input.Ordinal, input.ExpectedValueID, at, now)
-			if err != nil {
-				return nil, err
-			}
-			if err := s.appendManualPersonFactAttributePinTx(
-				ctx, tx, *definition, input.PersonID, personAttributeActor(input.Actor, ProvenanceUser)); err != nil {
-				return nil, err
-			}
-			if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
-				return nil, err
-			}
-			return &attributeValueWrite{Superseded: closed}, nil
+			return s.supersedePersonAttributeValueTx(ctx, tx, input, at, now)
 		})
 	return write.person(), err
+}
+
+func (s *Store) supersedePersonAttributeValueTx(ctx context.Context, tx *loggedTx, input PersonAttributeSupersedeInput, at, now time.Time) (*attributeValueWrite, error) {
+	if err := s.lockPersonFactAttributeTx(
+		ctx, tx, input.PersonID, input.DefinitionSlug); err != nil {
+		return nil, err
+	}
+	definition, err := s.getAttributeDefinitionBySlugTx(
+		ctx, tx, AttributeObjectPerson, input.DefinitionSlug)
+	if err != nil {
+		return nil, err
+	}
+	closed, err := s.supersedeAttributeValueTx(ctx, tx, personAttributeOwner, *definition,
+		input.PersonID, input.Ordinal, input.ExpectedValueID, at, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.appendManualPersonFactAttributePinTx(
+		ctx, tx, *definition, input.PersonID, personAttributeActor(input.Actor, ProvenanceUser)); err != nil {
+		return nil, err
+	}
+	if err := s.bumpPersonVCardProjectionsTx(ctx, tx, input.PersonID); err != nil {
+		return nil, err
+	}
+	return &attributeValueWrite{Superseded: closed}, nil
 }
 
 // lockPersonFactAttributeTx joins attribute writes to the same

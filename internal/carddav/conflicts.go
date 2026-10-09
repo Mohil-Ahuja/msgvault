@@ -71,11 +71,14 @@ func (s *Service) GetConflictView(ctx context.Context, id int64) (*ConflictDetai
 	if source.BaseAvailable {
 		base = projectConflictContact(source.BaseBody, false)
 	}
+	local := projectConflictContact(source.LocalBody, source.LocalTombstone)
+	remote := projectConflictContact(source.RemoteBody, source.RemoteTombstone)
+	projectConflictHiddenDifferences(source.LocalBody, source.RemoteBody, &local, &remote)
 	return &ConflictDetail{
 		ID: source.ID, AddressBook: publicAddressBookIdentity(source.AddressBookID, source.AddressBookName),
 		Status: source.Status, Resolution: source.Resolution, Base: base,
-		Local:              projectConflictContact(source.LocalBody, source.LocalTombstone),
-		Remote:             projectConflictContact(source.RemoteBody, source.RemoteTombstone),
+		Local:              local,
+		Remote:             remote,
 		AllowedResolutions: allowedConflictResolutions(source.Status),
 		CreatedAt:          source.CreatedAt, UpdatedAt: source.UpdatedAt, ResolvedAt: source.ResolvedAt,
 	}, nil
@@ -313,22 +316,6 @@ func (s *Service) prepareMappingConflict(
 		}
 		localBody, localHash = body, hash
 	}
-	localChanged := localTombstone || localHash != mapping.LocalHash
-	remoteChanged := remoteTombstone || remote.SemanticHash != mapping.RemoteSemanticHash
-	unimportedOwner := false
-	if !unresolved && !localChanged && remoteChanged && !remoteTombstone && mapping.PersonID != nil {
-		var err error
-		unimportedOwner, err = s.store.CardDAVPublishedRemoteNeedsConflictContext(ctx, book.ID, mapping.Href, remote.RemoteBody)
-		if err != nil {
-			return store.CardDAVConflictCapture{}, false, err
-		}
-	}
-	if !unresolved && !unimportedOwner && (!localChanged || !remoteChanged) {
-		return store.CardDAVConflictCapture{}, false, nil
-	}
-	if !unresolved && localTombstone && remoteTombstone {
-		return store.CardDAVConflictCapture{}, false, nil
-	}
 	if !unresolved && !localTombstone && !remoteTombstone {
 		localSemanticHash, err := SemanticHash(localBody)
 		if err != nil {
@@ -336,8 +323,19 @@ func (s *Service) prepareMappingConflict(
 		}
 		if localSemanticHash == remote.SemanticHash {
 			remote.EquivalentLocalHash = localHash
-			return store.CardDAVConflictCapture{}, false, nil
 		}
+	}
+	remoteHash, equivalentLocalHash := "", ""
+	var remoteBody []byte
+	if !remoteTombstone {
+		remoteHash, equivalentLocalHash, remoteBody = remote.SemanticHash, remote.EquivalentLocalHash, remote.RemoteBody
+	}
+	needsConflict, err := s.store.CardDAVResourceNeedsConflictContext(ctx, book.ID, mapping.Href, remoteHash, equivalentLocalHash, remoteBody)
+	if err != nil {
+		return store.CardDAVConflictCapture{}, false, err
+	}
+	if !needsConflict {
+		return store.CardDAVConflictCapture{}, false, nil
 	}
 	capture := store.CardDAVConflictCapture{
 		AddressBookID: book.ID, Href: mapping.Href,

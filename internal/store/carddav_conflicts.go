@@ -1258,15 +1258,20 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 		if err != nil {
 			return err
 		}
-		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
-			return err
-		}
 		mapping, err := s.findCardDAVResourceTx(ctx, tx, identity.AddressBookID, identity.Href)
 		if err != nil || mapping.MappingRevision != input.ExpectedMappingRevision {
 			return ErrCardDAVConflictStale
 		}
 		if input.ExpectedPersonID != 0 && (mapping.PersonID == nil || *mapping.PersonID != input.ExpectedPersonID) {
 			return ErrCardDAVReviewStale
+		}
+		if mapping.PersonID != nil {
+			if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "person-fact-generation", *mapping.PersonID); err != nil {
+				return err
+			}
+		}
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
 		}
 		conflict, err := getCardDAVConflictFrom(ctx, tx, input.ConflictID, s.dialect.SelectForUpdate())
 		if err != nil {
@@ -1525,6 +1530,9 @@ func (s *Store) cancelCardDAVPublicationForRemoteDeleteTx(
 		return err
 	}
 	if deleted > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET person_revision_at_bind = NULL, updated_at = `+s.dialect.Now()+` WHERE person_id = ?`, personID); err != nil {
+			return fmt.Errorf("retain person after remote publication deletion: %w", err)
+		}
 		return s.clearPersonCardDAVInferenceApprovalTx(ctx, tx, personID)
 	}
 	return nil

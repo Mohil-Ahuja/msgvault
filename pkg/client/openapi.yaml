@@ -1803,6 +1803,10 @@ components:
           items:
             type: string
           type: array
+        fields:
+          items:
+            $ref: "#/components/schemas/ContactField"
+          type: array
         phones:
           items:
             type: string
@@ -2754,6 +2758,21 @@ components:
         - created
         - updated
         - removed
+      type: object
+    ContactField:
+      properties:
+        labels:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+        value:
+          type: string
+      required:
+        - name
+        - value
+        - labels
       type: object
     ContactState:
       properties:
@@ -11322,6 +11341,9 @@ components:
         start_date:
           $ref: "#/components/schemas/PartialDate"
         status:
+          type: string
+        superseded_at:
+          format: date-time
           type: string
         target_person_id:
           format: int64

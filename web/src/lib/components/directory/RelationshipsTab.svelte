@@ -105,7 +105,7 @@
   </header>
 
   <div class="filters">
-    <Checkbox checked={controller.relationshipsIncludeEnded} label="Include ended relationships" onchange={(checked) => void changeHistoryMode(checked)} />
+    <Checkbox checked={controller.relationshipsIncludeEnded} label="Include ended and superseded relationships" onchange={(checked) => void changeHistoryMode(checked)} />
     <Button label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
   </div>
 
@@ -124,7 +124,7 @@
         <li>
           <div>
             <strong>{counterpart(view)} · {view.counterpart_label}</strong>
-            <small>{view.direction}{#if view.relationship.start_date} · from {dateText(view.relationship.start_date)}{/if}{#if view.relationship.end_date} · ended {dateText(view.relationship.end_date)}{/if}</small>
+            <small>{view.direction}{#if view.relationship.start_date} · from {dateText(view.relationship.start_date)}{/if}{#if view.relationship.end_date} · ended {dateText(view.relationship.end_date)}{/if}{#if view.relationship.superseded_at} · superseded{/if}</small>
             {#if view.relationship.notes}<p>{view.relationship.notes}</p>{/if}
           </div>
           <div class="row-actions">

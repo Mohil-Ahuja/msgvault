@@ -17,7 +17,7 @@ type GeneratedSummary = GeneratedCardDAVContactSummaryResponse;
 export type CardDAVConflictChoice = GeneratedDetail['allowed_resolutions'][number];
 export type CardDAVConflictAddressBook = Pick<GeneratedAddressBook, 'id' | 'name'>;
 export type CardDAVConflictSummary = Pick<GeneratedSummary, 'state' | 'emails' | 'phones'> &
-  Partial<Pick<GeneratedSummary, 'display_name' | 'truncated'>>;
+  Partial<Pick<GeneratedSummary, 'display_name' | 'truncated' | 'fields'>>;
 export type CardDAVConflictListItem = Pick<
   GeneratedConflict,
   'id' | 'status' | 'local_state' | 'remote_state' | 'allowed_resolutions' | 'updated_at'
@@ -451,6 +451,7 @@ function safeSummary(summary: GeneratedSummary): CardDAVConflictSummary {
     state: summary.state,
     emails: [...summary.emails],
     phones: [...summary.phones],
+    ...(summary.fields !== undefined ? { fields: summary.fields.map(field => ({ name: field.name, value: field.value, labels: [...field.labels] })) } : {}),
     ...(summary.display_name !== undefined ? { display_name: summary.display_name } : {}),
     ...(summary.truncated !== undefined ? { truncated: summary.truncated } : {}),
   };

@@ -1382,6 +1382,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	if err := s.prepareRelationshipSupersededColumn(ctx); err != nil {
+		return err
+	}
+
 	// Load and execute schema files provided by the dialect.
 	for _, filename := range s.dialect.SchemaFiles() {
 		schema, err := schemaFS.ReadFile(filename)

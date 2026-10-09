@@ -57,7 +57,7 @@ describe('RelationshipsTab', () => {
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
       view(42, 'incoming', 'is mentored by', 'Synthetic Guide'),
       view(43, 'outgoing', 'works with', 'Synthetic Peer', {
-        relationship: relationship(43, 1, { is_symmetric: true, forward_label: 'works with', reverse_label: 'works with' })
+        relationship: relationship(43, 1, { superseded_at: '2026-08-02T00:00:00Z', is_symmetric: true, forward_label: 'works with', reverse_label: 'works with' })
       })
     ];
     controller.relationshipTypes = [
@@ -70,6 +70,7 @@ describe('RelationshipsTab', () => {
     expect(screen.getByText('Synthetic Learner · mentors')).toBeDefined();
     expect(screen.getByText('Synthetic Guide · is mentored by')).toBeDefined();
     expect(screen.getByText('Synthetic Peer · works with')).toBeDefined();
+    expect(screen.getByText(/outgoing\s*· superseded/)).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
     expect(screen.queryByRole('button', { name: 'Edit mentor relationship type' })).toBeNull();
@@ -91,7 +92,7 @@ describe('RelationshipsTab', () => {
     }));
     render(RelationshipsTab, { client, controller, personID: 7 });
 
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended relationships' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include ended and superseded relationships' }));
     await waitFor(() => expect(includeEnded).toEqual(['true']));
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh relationships' }));
 

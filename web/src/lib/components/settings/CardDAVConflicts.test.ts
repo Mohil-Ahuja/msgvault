@@ -44,6 +44,7 @@ function conflictDetail(id: number, overrides: Record<string, unknown> = {}) {
       display_name: 'Synthetic Contact',
       emails: ['contact@example.test'],
       phones: ['+1 555 0100'],
+      fields: [{ name: 'EMAIL', value: 'contact@example.test', labels: ['TYPE=home'], ...forbidden }, { name: 'ADR', value: ';;123 Example Street;Example City;;;', labels: ['TYPE=work'], ...forbidden }],
       truncated: true
     }),
     local: contactSummary('deleted', { display_name: 'MUST-NOT-RENDER-LOCAL' }),
@@ -153,12 +154,14 @@ describe('CardDAVConflicts', () => {
     expect(within(detail).getByRole('heading', { name: 'Remote' })).toBeDefined();
     expect(within(detail).getByText('Present')).toBeDefined();
     expect(within(detail).getByText('Synthetic Contact')).toBeDefined();
+    expect(within(detail).getByText('home')).toBeDefined();
+    expect(within(detail).getByText('123 Example Street, Example City')).toBeDefined();
     expect(within(detail).getByText('contact@example.test')).toBeDefined();
     expect(within(detail).getByText('+1 555 0100')).toBeDefined();
-    expect(within(detail).getByText('Additional name, email, or phone values are not shown.')).toBeDefined();
+    expect(within(detail).getByText('More values are omitted.')).toBeDefined();
     expect(within(detail).getByText('Deleted. This side is a deletion tombstone.')).toBeDefined();
     expect(within(detail).getByText('Unavailable. No safe comparison summary is available.')).toBeDefined();
-    expect(screen.getByText('Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.')).toBeDefined();
+    expect(screen.getByText('The comparison includes contact values, labels and profile addresses. Your choice applies to the whole card.')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Keep remote card' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Keep local card' })).toBeNull();
     expect(rendered.container.textContent).not.toMatch(/FORBIDDEN-VCARD|MUST-NOT-RENDER|must-not-render/i);

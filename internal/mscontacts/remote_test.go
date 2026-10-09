@@ -1586,7 +1586,7 @@ func TestOutlookDeleteOfOriginalLeavesTheCopy(t *testing.T) {
 
 	_, err = f.store.GetCardDAVResourceContext(t.Context(), f.book.ID, copyHref)
 	require.NoError(err, "the copy keeps its ID href")
-	require.Equal(2, f.fake.posts, "the person is published again instead of taking over the copy")
+	require.Equal(1, f.fake.posts, "deleting the original cancels its publication")
 }
 
 // An Outlook contact that msgvault updated carries a saved vCard without a
@@ -1739,8 +1739,7 @@ func TestThinListingIsReread(t *testing.T) {
 			if tc.deleted {
 				assert.False(f.fake.deleteOnRead, "the sync reread the thin contact")
 				restored := f.fake.published()
-				require.Len(restored, 1)
-				assert.Contains(restored[0].property(vcardProperty), "https://alice.example.test")
+				require.Empty(restored, "remote deletion cancels publication")
 				return
 			}
 			resource, err := f.store.GetCardDAVResourceContext(t.Context(), f.book.ID, f.book.CanonicalURL+"/uid/alice")

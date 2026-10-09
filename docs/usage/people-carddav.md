@@ -276,8 +276,9 @@ values stay on the card and allow other edits to apply. A remote rename applies
 only when the person has no structured name. For a person with a structured
 name, a remote rename raises a conflict. Removing a plain email or phone value
 from the card hides it on the profile, even one msgvault learned from messages.
-Changing an existing value msgvault can't import, such as an address, raises a
-conflict. A plain email or phone added in the address book joins the profile.
+Changing a profile-owned field msgvault can't import, such as a saved address,
+raises a conflict. A plain email or phone added in the address book joins the
+profile.
 Other fields added there, such as an address, stay on the card without reaching
 the profile. Deleting the contact in the address book turns publication off and
 keeps the profile.
@@ -393,10 +394,10 @@ connection's credential needs repair.
 
 If both msgvault and the address book changed the same card, msgvault records a
 conflict for review. A remote-only edit to a field the pull cannot apply on a
-published contact also raises a conflict. Its two sides can look identical in
-the summary when the change is in a field the summary doesn't show, such as an
-address. msgvault records edit/delete conflicts instead of silently choosing a
-side.
+published contact also raises a conflict. The comparison shows field values
+and labels, including saved profile addresses. For private notes, relationships,
+websites and photos, it names the changed field and hides its contents. msgvault
+records edit/delete conflicts instead of silently choosing a side.
 
 ```bash
 msgvault carddav conflicts list
