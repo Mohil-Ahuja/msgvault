@@ -586,7 +586,7 @@ func init() {
 	personRelationshipAddCmd.Flags().StringVar(&relationshipEndDate, "until", "", "Partial end date for a relationship that has already ended")
 	personRelationshipAddCmd.Flags().StringVar(&relationshipNotes, "notes", "", "Free-text notes")
 	personRelationshipListCmd.Flags().BoolVar(&relationshipIncludeEnded, "include-ended", false,
-		"Include relationships that have ended")
+		"Include ended or superseded relationships")
 	personRelationshipReviewsCmd.Flags().StringVar(&relationshipReviewStatus, "status", "",
 		"Filter by review status: pending, accepted, or rejected")
 }

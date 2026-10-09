@@ -84,6 +84,7 @@ type personMergeSnapshotColumn struct {
 }
 
 type personMergeSnapshotPerson struct {
+	CardDAVCleanupRetained  bool    `json:"carddav_cleanup_retained,omitempty"`
 	ID                      int64   `json:"id"`
 	VCardUID                string  `json:"vcard_uid"`
 	DisplayName             *string `json:"display_name,omitzero" nullable:"false"`
@@ -524,11 +525,11 @@ func capturePersonMergeRootTx(
 		updatedAt   any
 	)
 	err := tx.QueryRowContext(ctx, `SELECT
-		id, vcard_uid, display_name, revision, vcard_projection_revision,
+		id, vcard_uid, display_name, revision, vcard_projection_revision, carddav_cleanup_retained,
 		created_at, updated_at
 		FROM persons WHERE id = ?`, personID).Scan(
 		&person.ID, &person.VCardUID, &displayName, &person.Revision,
-		&person.VCardProjectionRevision, &createdAt, &updatedAt,
+		&person.VCardProjectionRevision, &person.CardDAVCleanupRetained, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return personMergeSnapshotPerson{}, ErrPersonNotFound

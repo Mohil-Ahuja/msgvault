@@ -36,6 +36,13 @@ func (s *Store) prepareRelationshipSupersededColumn(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS idx_person_relationships_active_unique`); err != nil {
 			return fmt.Errorf("replace relationship uniqueness index: %w", err)
 		}
+		if missing {
+			for _, index := range []string{"idx_person_relationships_target_active", "idx_person_relationships_source_current_edge", "idx_person_relationships_target_current_edge"} {
+				if _, err := tx.ExecContext(ctx, `DROP INDEX IF EXISTS `+index); err != nil {
+					return fmt.Errorf("drop stale relationship index: %w", err)
+				}
+			}
+		}
 		return nil
 	})
 }

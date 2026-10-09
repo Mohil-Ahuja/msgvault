@@ -36,7 +36,7 @@ func (s *Server) registerPersonNetworkRoutes(api huma.API) {
 	depth.Schema.Maximum = &maximumDepth
 	get.Parameters = append(get.Parameters,
 		depth,
-		queryBooleanParam("include_ended", "Include ended relationships and employment records"),
+		queryBooleanParam("include_ended", "Include ended or superseded relationships and ended employment records"),
 	)
 	get.Responses = jsonResponsesFor[store.PersonNetwork](api)
 	addErrorResponses(api, get.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)

@@ -2575,7 +2575,7 @@ Record typed relationships between two saved profiles:
 | `relationship-type update <type-id> [flags]` | Change labels and presentation |
 | `relationship-type delete <type-id>` | Delete an eligible user-owned type |
 | `person relationship add <source-person-id> <type-slug> <target-person-id>` | Add a relationship; accepts `--from`, `--until`, and `--notes` |
-| `person relationship list <person-id> [--include-ended]` | Read relationships from that person's perspective |
+| `person relationship list <person-id> [--include-ended]` | Read relationships from that person's perspective; `--include-ended` includes ended or superseded records |
 | `person relationship end <relationship-id> <until-date>` | End a relationship while keeping history |
 | `person relationship delete <relationship-id>` | Permanently delete a relationship |
 | `person relationship reviews [--status <status>]` | Inspect relationship review candidates |

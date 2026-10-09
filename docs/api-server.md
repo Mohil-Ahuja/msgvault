@@ -492,8 +492,9 @@ relationships and employments. It never derives nodes or edges from messages,
 conversations, participant co-occurrence, or the analytical cache.
 
 `depth` defaults to `1` and accepts `1`, `2`, or `3`. `include_ended` defaults
-to `false`; set it to `true` to admit ended relationships and employment
-records. The deterministic breadth-first response contains at most 250 nodes
+to `false`; set it to `true` to admit ended or superseded relationships and
+ended employment records. The deterministic breadth-first response contains at
+most 250 nodes
 and 500 edges. `truncated: true` means the response is a bounded prefix and can
 contain fewer than either maximum. The root durable person is returned even
 when it has no qualifying connections.

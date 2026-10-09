@@ -302,6 +302,9 @@ func (s *Service) prepareMappingConflict(
 	if conflictErr != nil && !errors.Is(conflictErr, store.ErrCardDAVConflictNotFound) {
 		return store.CardDAVConflictCapture{}, false, conflictErr
 	}
+	if !unresolved && !remoteTombstone && remote != nil && remote.RemoteETag == mapping.RemoteETag && remote.SemanticHash == mapping.RemoteSemanticHash {
+		return store.CardDAVConflictCapture{}, false, nil
+	}
 	localTombstone := mapping.PersonID == nil || (existingConflict != nil && existingConflict.LocalTombstone)
 	localHash := mapping.LocalHash
 	var localBody []byte

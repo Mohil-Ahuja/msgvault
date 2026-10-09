@@ -1209,7 +1209,11 @@ func (s *Store) createCardDAVImportedPersonTx(
 			return nil, nil, err
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, nil); err != nil {
+	resource, err := vcard.ParseResourceEnvelope(input.RemoteBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, nil, resource); err != nil {
 		return nil, nil, err
 	}
 	revision := int64(1)
@@ -1218,12 +1222,9 @@ func (s *Store) createCardDAVImportedPersonTx(
 
 func (s *Store) addCardDAVImportedProjectionTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, input CardDAVRemoteResource,
-	skip map[string]bool,
+	skip map[string]bool, resource vcard.ResourceEnvelope,
 ) error {
-	resource, err := vcard.ParseResourceEnvelope(input.RemoteBody)
-	if err != nil {
-		return err
-	}
+	var err error
 	properties := make(map[string]vcard.Property, len(resource.PropertyTree))
 	for _, occurrence := range resource.PropertyTree {
 		properties[occurrence.Identity.Key()] = occurrence.Property
@@ -1406,13 +1407,13 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 	if err != nil && !errors.Is(err, ErrVCardResourceNotFound) {
 		return false, err
 	}
+	incoming, err := vcard.ParseResourceEnvelope(input.RemoteBody)
+	if err != nil {
+		return false, err
+	}
 	skip := make(map[string]bool)
 	keptOwners := make(map[string][]int64)
 	if envelope != nil && len(envelope.NativeMappings) > 0 {
-		incoming, err := vcard.ParseResourceEnvelope(input.RemoteBody)
-		if err != nil {
-			return false, err
-		}
 		owners, err := cardDAVRebindOwners(envelope.ResourceEnvelope, incoming)
 		if err != nil {
 			return false, err
@@ -1484,7 +1485,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 			return false, fmt.Errorf("supersede %s CardDAV projection: %w", table, err)
 		}
 	}
-	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, skip); err != nil {
+	if err := s.addCardDAVImportedProjectionTx(ctx, tx, bookID, personID, input, skip, incoming); err != nil {
 		return false, err
 	}
 	displayChanged := false
@@ -2080,16 +2081,17 @@ func (s *Store) deleteUntouchedCardDAVImportedPersonTx(
 		return nil
 	}
 	var revision, otherMappings int64
-	err := tx.QueryRowContext(ctx, `SELECT revision,
+	var retained bool
+	err := tx.QueryRowContext(ctx, `SELECT revision, carddav_cleanup_retained,
 		(SELECT COUNT(*) FROM carddav_resources WHERE person_id = persons.id)
-		FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &otherMappings)
+		FROM persons WHERE id = ?`, *resource.PersonID).Scan(&revision, &retained, &otherMappings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("check CardDAV imported person tombstone: %w", err)
 	}
-	if revision != *resource.PersonRevisionAtBind || otherMappings != 0 {
+	if retained || revision != *resource.PersonRevisionAtBind || otherMappings != 0 {
 		return nil
 	}
 	if err := s.deleteIdentityMatchCandidatesForPersonTx(ctx, tx, *resource.PersonID); err != nil {
@@ -2118,9 +2120,7 @@ func (s *Store) personHasCardDAVImportedProjectionTx(
 }
 
 // When a remotely governed resource disappears before another mapping for the
-// same imported person, carry its cleanup baseline forward. A nil baseline is
-// deliberately sticky once user-owned state is observed, so removing the last
-// duplicate cannot later erase that state using a newer local bind revision.
+// same imported person, carry its cleanup baseline forward; user decisions retain the person.
 func (s *Store) transferCardDAVImportedPersonCleanupBaselineTx(
 	ctx context.Context, tx *loggedTx, resource *CardDAVResource, personHasUserOwnedState bool,
 ) error {
@@ -2128,10 +2128,13 @@ func (s *Store) transferCardDAVImportedPersonCleanupBaselineTx(
 		resource.PersonRevisionAtBind == nil {
 		return nil
 	}
-	var baseline any = *resource.PersonRevisionAtBind
 	if personHasUserOwnedState {
-		baseline = nil
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET carddav_cleanup_retained = TRUE WHERE id = ?`, *resource.PersonID); err != nil {
+			return fmt.Errorf("retain CardDAV person with local decisions: %w", err)
+		}
+		return nil
 	}
+	baseline := *resource.PersonRevisionAtBind
 	if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources
 		SET person_revision_at_bind = ?, updated_at = `+s.dialect.Now()+`
 		WHERE person_id = ?`, baseline, *resource.PersonID); err != nil {

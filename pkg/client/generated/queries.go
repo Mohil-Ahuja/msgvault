@@ -1005,7 +1005,7 @@ type GetPersonNetworkQuery struct {
 	// Depth Breadth-first depth (default 1, minimum 1, maximum 3)
 	Depth *int64 `json:"depth,omitempty" validate:"omitempty,gte=1,lte=3"`
 
-	// IncludeEnded Include ended relationships and employment records
+	// IncludeEnded Include ended or superseded relationships and ended employment records
 	IncludeEnded *bool `json:"include_ended,omitempty"`
 }
 
@@ -1019,6 +1019,7 @@ type AppendPersonNoteQuery struct {
 }
 
 type ListPersonRelationshipsQuery struct {
+	// IncludeEnded Include ended or superseded relationships
 	IncludeEnded *bool `json:"include_ended,omitempty"`
 }
 

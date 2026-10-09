@@ -28,10 +28,11 @@ All notable changes to msgvault, grouped by release.
 
 - Address-book edits to a published contact's name, emails and phones now reach
   the person instead of being overwritten. Edits to an unlabeled email or phone
-  value apply. Changing a label, or a value that carries one, raises a
-  conflict. Changing an existing value msgvault can't import, such as an
-  address, raises a conflict. A plain email or phone added in the address book
-  joins the profile; other added fields, such as an address, stay on the card
+  value apply. Changing a profile-owned label, or a profile-owned value that
+  carries one, raises a conflict. Imported labeled values accept remote value
+  edits when their parameters stay the same. Changing a profile-owned field
+  msgvault can't import, such as a saved address, raises a conflict. A plain email
+  or phone added in the address book joins the profile; other added fields, such as an address, stay on the card
   without reaching the profile. Deleting a published contact in the address
   book turns publication off and keeps the person.
 

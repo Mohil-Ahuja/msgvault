@@ -81,31 +81,37 @@ func TestProjectConflictContactIgnoresLaterFNWithoutReportingTruncation(t *testi
 }
 
 func TestProjectConflictContactShowsLabelsAndProfileFields(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example Person\r\nEMAIL;TYPE=home;PREF=2:person@example.test\r\nADR;TYPE=work;LABEL=Office:;;123 Example Street;Example City;;;\r\nTITLE:Engineer\r\nEND:VCARD\r\n")
 	got := projectConflictContact(body, false)
-	require.Len(t, got.Fields, 3)
-	assert.Equal(t, ContactField{Name: "EMAIL", Value: "person@example.test", Labels: []string{"TYPE=home", "PREF=2"}}, got.Fields[0])
-	assert.Contains(t, got.Fields[1].Value, "123 Example Street")
-	assert.Equal(t, []string{"TYPE=work", "LABEL=Office"}, got.Fields[1].Labels)
-	assert.Equal(t, "Engineer", got.Fields[2].Value)
+	require.Len(got.Fields, 3)
+	assert.Equal(ContactField{Name: "EMAIL", Value: "person@example.test", Labels: []string{"TYPE=home", "PREF=2"}}, got.Fields[0])
+	assert.Contains(got.Fields[1].Value, "123 Example Street")
+	assert.Equal([]string{"TYPE=work", "LABEL=Office"}, got.Fields[1].Labels)
+	assert.Equal("Engineer", got.Fields[2].Value)
 	edited := strings.ReplaceAll(string(body), "TYPE=home", "TYPE=work")
 	remote := projectConflictContact([]byte(edited), false)
-	assert.Equal(t, got.Emails, remote.Emails)
-	assert.NotEqual(t, got.Fields, remote.Fields)
+	assert.Equal([]string{"person@example.test"}, remote.Emails)
+	assert.NotEqual(got.Fields, remote.Fields)
 }
 
 func TestProjectConflictHiddenDifferencesIdentifyPrivateFields(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	localBody := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\nNOTE:private-local-note\r\nRELATED:private-local-target\r\nEND:VCARD\r\n")
 	remoteBody := []byte(strings.ReplaceAll(strings.ReplaceAll(string(localBody), "private-local-note", "private-remote-note"), "private-local-target", "private-remote-target"))
 	local, remote := projectConflictContact(localBody, false), projectConflictContact(remoteBody, false)
 	projectConflictHiddenDifferences(localBody, remoteBody, &local, &remote)
-	require.Len(t, local.Fields, 2)
-	require.Len(t, remote.Fields, 2)
-	assert.Equal(t, "NOTE", remote.Fields[0].Name)
-	assert.Equal(t, "RELATED", remote.Fields[1].Name)
-	assert.NotEqual(t, local.Fields[0].Labels, remote.Fields[0].Labels)
+	require.Len(local.Fields, 2)
+	require.Len(remote.Fields, 2)
+	assert.Equal("NOTE", remote.Fields[0].Name)
+	assert.Equal("RELATED", remote.Fields[1].Name)
+	assert.NotEqual(local.Fields[0].Labels, remote.Fields[0].Labels)
 	encoded, err := json.Marshal([]ContactSummary{local, remote})
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "private-local")
-	assert.NotContains(t, string(encoded), "private-remote")
+	require.NoError(err)
+	assert.NotContains(string(encoded), "private-local")
+	assert.NotContains(string(encoded), "private-remote")
 }

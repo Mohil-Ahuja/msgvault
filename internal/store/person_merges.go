@@ -354,6 +354,9 @@ func (s *Store) mergePersonsOnce(
 		if err := recordPersonMergeSnapshotRowsTx(ctx, tx, mergeID, snapshot.Rows); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET carddav_cleanup_retained = carddav_cleanup_retained OR (SELECT carddav_cleanup_retained FROM persons WHERE id = ?) WHERE id = ?`, absorbed.ID, survivor.ID); err != nil {
+			return fmt.Errorf("retain merged person cleanup state: %w", err)
+		}
 		if err := s.moveCorePersonProfileTx(
 			ctx, tx, mergeID, survivor.ID, absorbed.ID, survivor.VCardUID,
 		); err != nil {

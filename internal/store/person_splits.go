@@ -177,8 +177,8 @@ func (s *Store) splitPersonMergeOnce(
 		}
 		var newPersonID int64
 		if err := tx.QueryRowContext(ctx,
-			`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?) RETURNING id`,
-			newUID, displayName,
+			`INSERT INTO persons (vcard_uid, display_name, carddav_cleanup_retained) VALUES (?, ?, ?) RETURNING id`,
+			newUID, displayName, absorbedRoot.CardDAVCleanupRetained,
 		).Scan(&newPersonID); err != nil {
 			return fmt.Errorf("create split person: %w", err)
 		}
@@ -237,6 +237,11 @@ func (s *Store) splitPersonMergeOnce(
 				return err
 			}
 			ambiguous = append(ambiguous, ancestorAmbiguous...)
+			if ancestor.absorbedRoot.CardDAVCleanupRetained {
+				if _, err := tx.ExecContext(ctx, `UPDATE persons SET carddav_cleanup_retained = TRUE WHERE id = ?`, newPersonID); err != nil {
+					return fmt.Errorf("restore ancestor split cleanup retention: %w", err)
+				}
+			}
 			if ancestor.absorbedRoot.DisplayName != nil {
 				if _, err := tx.ExecContext(ctx, `UPDATE persons
 					SET display_name = COALESCE(display_name, ?) WHERE id = ?`,

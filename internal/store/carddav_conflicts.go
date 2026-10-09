@@ -1530,7 +1530,7 @@ func (s *Store) cancelCardDAVPublicationForRemoteDeleteTx(
 		return err
 	}
 	if deleted > 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET person_revision_at_bind = NULL, updated_at = `+s.dialect.Now()+` WHERE person_id = ?`, personID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE persons SET carddav_cleanup_retained = TRUE WHERE id = ?`, personID); err != nil {
 			return fmt.Errorf("retain person after remote publication deletion: %w", err)
 		}
 		return s.clearPersonCardDAVInferenceApprovalTx(ctx, tx, personID)

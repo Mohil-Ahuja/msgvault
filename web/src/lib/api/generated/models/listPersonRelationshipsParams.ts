@@ -3,5 +3,8 @@
  */
 
 export type ListPersonRelationshipsParams = {
+  /**
+   * Include ended or superseded relationships
+   */
   include_ended?: boolean;
 };

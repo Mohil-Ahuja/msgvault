@@ -512,10 +512,17 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	// original revision would misrepresent the curated profile. With
 	// includeIdentity, the closure above already pulled every bound
 	// participant in, so no touched person is skipped.
+	retainedColumn, err := sourceColumnExpression(tx, "persons", "carddav_cleanup_retained", "p")
+	if err != nil {
+		return nil, err
+	}
+	if retainedColumn == "NULL" {
+		retainedColumn = "FALSE"
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO persons
-			(id, vcard_uid, display_name, revision, created_at, updated_at)
-		SELECT p.id, p.vcard_uid, p.display_name, p.revision, p.created_at, p.updated_at
+			(id, vcard_uid, display_name, revision, carddav_cleanup_retained, created_at, updated_at)
+		SELECT p.id, p.vcard_uid, p.display_name, p.revision, ` + retainedColumn + `, p.created_at, p.updated_at
 		FROM src.persons p
 		WHERE EXISTS (
 			SELECT 1 FROM src.person_participants pp

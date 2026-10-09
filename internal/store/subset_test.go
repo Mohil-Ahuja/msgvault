@@ -113,6 +113,8 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 	fixture := seedSubsetPersonMerge(t, sourcePath, false)
 	source, err := Open(sourcePath)
 	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `UPDATE persons SET carddav_cleanup_retained = TRUE`)
+	require.NoError(err)
 	sourceIdentityRevision, err := source.IdentityRevision()
 	require.NoError(err)
 	require.NoError(source.Close())
@@ -124,6 +126,9 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var retainedCount int
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE carddav_cleanup_retained = TRUE`).Scan(&retainedCount))
+	assert.Positive(retainedCount)
 	destinationIdentityRevision, err := destination.IdentityRevision()
 	require.NoError(err)
 	assert.Positive(sourceIdentityRevision)
@@ -4878,6 +4883,7 @@ func TestCopySubsetCopiesRelationshipsFromSourcesWithoutResourceColumn(t *testin
 		DROP INDEX idx_person_relationship_reviews_occurrence_unique;
 		ALTER TABLE person_relationship_reviews DROP COLUMN source_resource_uid;
 		ALTER TABLE person_relationships DROP COLUMN source_resource_uid;
+		ALTER TABLE persons DROP COLUMN carddav_cleanup_retained;
 	`)
 	require.NoError(err, "simulate a source that predates source_resource_uid")
 	require.NoError(source.Close())
@@ -4888,6 +4894,9 @@ func TestCopySubsetCopiesRelationshipsFromSourcesWithoutResourceColumn(t *testin
 	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = destination.Close() })
+	var retainedCount int
+	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM persons WHERE carddav_cleanup_retained = TRUE`).Scan(&retainedCount))
+	assert.Zero(retainedCount, "archives predating cleanup retention default to ordinary cleanup")
 	views, err := destination.ListPersonRelationshipsContext(
 		ctx, alice.ID, PersonRelationshipListOptions{})
 	require.NoError(err)

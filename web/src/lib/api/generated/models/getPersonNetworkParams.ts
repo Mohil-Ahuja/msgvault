@@ -10,7 +10,7 @@ export type GetPersonNetworkParams = {
    */
   depth?: number;
   /**
-   * Include ended relationships and employment records
+   * Include ended or superseded relationships and ended employment records
    */
   include_ended?: boolean;
 };

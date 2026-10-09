@@ -2979,3 +2979,22 @@ func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testi
 	assert.True(newEnrollment.Enrolled, "the snapshot enrollment is restored for the new person")
 	assert.Equal("owner", newEnrollment.Actor)
 }
+
+func TestSplitPersonMergeRetainsCardDAVCleanupState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE persons SET carddav_cleanup_retained = TRUE WHERE id = ?`), absorbed.ID)
+		require.NoError(err)
+	})
+	var retained bool
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT carddav_cleanup_retained FROM persons WHERE id = ?`), f.survivor.ID).Scan(&retained))
+	assert.True(retained, "merge carries retained cleanup state from the absorbed person")
+	result, err := f.store.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: f.absorbedParticipants,
+		ExpectedSourceRevision: f.survivor.Revision, IdempotencyKey: "split-carddav-retention", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT carddav_cleanup_retained FROM persons WHERE id = ?`), result.NewPerson.ID).Scan(&retained))
+	assert.True(retained, "split restores the absorbed person's retained cleanup state")
+}

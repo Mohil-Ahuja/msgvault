@@ -14695,7 +14695,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.8.0
+  version: 3.9.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -26097,7 +26097,7 @@ paths:
             maximum: 3
             minimum: 1
             type: integer
-        - description: Include ended relationships and employment records
+        - description: Include ended or superseded relationships and ended employment records
           in: query
           name: include_ended
           schema:
@@ -26465,7 +26465,8 @@ paths:
           schema:
             format: int64
             type: integer
-        - in: query
+        - description: Include ended or superseded relationships
+          in: query
           name: include_ended
           schema:
             type: boolean

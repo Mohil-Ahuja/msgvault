@@ -269,9 +269,10 @@ Turning publication off removes the remote card while retaining the local
 profile. When only the address book changed a published contact, edits to its
 emails and phones apply on the next sync when only plain values change and
 their parameters stay the same. A label-only change, such as `TYPE=home` to
-`TYPE=work`, raises a conflict, and so does editing a value that has a label in
-msgvault. Changed or added values the import cannot store
-intact, such as a telephone URI with `;ext=`, also raise a conflict. Unchanged
+`TYPE=work`, raises a conflict for a profile-owned value, as does editing a
+profile-owned value that has a label. Imported values retain their labels and
+accept remote value edits when their parameters stay the same. Changed or added
+values the import cannot store intact, such as a telephone URI with `;ext=`, also raise a conflict. Unchanged
 values stay on the card and allow other edits to apply. A remote rename applies
 only when the person has no structured name. For a person with a structured
 name, a remote rename raises a conflict. Removing a plain email or phone value
