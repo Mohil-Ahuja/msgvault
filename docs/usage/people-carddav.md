@@ -266,23 +266,29 @@ To publish a person, open their saved profile in **Directory** and turn on
 **Publish person to CardDAV**. A contact UID identifies that published person
 across syncs. Later profile changes are reconciled to the write target.
 Turning publication off removes the remote card while retaining the local
-profile. When only the address book changed a published contact, edits to its
-emails and phones apply on the next sync when only plain values change and
-their parameters stay the same. A label-only change, such as `TYPE=home` to
+profile.
+
+When only the address book changed a published contact, edits to its emails
+and phones apply on the next sync when only plain values change and their
+parameters stay the same. A label-only change, such as `TYPE=home` to
 `TYPE=work`, raises a conflict for a profile-owned value, as does editing a
 profile-owned value that has a label. Imported values retain their labels and
-accept remote value edits when their parameters stay the same. Changed or added
-values the import cannot store intact, such as a telephone URI with `;ext=`, also raise a conflict. Unchanged
-values stay on the card and allow other edits to apply. A remote rename applies
-only when the person has no structured name. For a person with a structured
-name, a remote rename raises a conflict. Removing a plain email or phone value
-from the card hides it on the profile, even one msgvault learned from messages.
-Changing a profile-owned field msgvault can't import, such as a saved address,
-raises a conflict. A plain email or phone added in the address book joins the
-profile. Adding a labeled email or phone, such as `TEL;TYPE=cell`, raises a
-conflict. Other fields added there, such as an address, stay on the card without
-reaching the profile. Deleting the contact in the address book turns publication
-off and keeps the profile.
+accept remote value edits when their parameters stay the same. Changed or
+added values the import cannot store intact, such as a telephone URI with
+`;ext=`, also raise a conflict. Unchanged values stay on the card and allow
+other edits to apply.
+
+A remote rename applies only when the person has no structured name. For a
+person with a structured name, a remote rename raises a conflict.
+
+Removing a plain email or phone value from the card hides it on the profile,
+even one msgvault learned from messages. Changing a profile-owned field
+msgvault can't import, such as a saved address, raises a conflict. A plain
+email or phone added in the address book joins the profile. Adding a labeled
+email or phone, such as `TEL;TYPE=cell`, raises a conflict. Other fields
+added there, such as an address, stay on the card without reaching the
+profile. Deleting the contact in the address book turns publication off and
+keeps the profile.
 
 The same actions are available from the CLI:
 

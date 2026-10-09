@@ -732,12 +732,6 @@ func matchingCardDAVPublicationTx(ctx context.Context, tx *loggedTx, personID, b
 	return publication, true, nil
 }
 
-// cardDAVPersonPublishedToCardTx reports whether msgvault publishes the person to this card.
-func (s *Store) cardDAVPersonPublishedToCardTx(ctx context.Context, tx *loggedTx, personID, bookID int64, href string) (bool, error) {
-	_, matches, err := matchingCardDAVPublicationTx(ctx, tx, personID, bookID, href)
-	return matches, err
-}
-
 // cardDAVPublishedPersonUnchangedLocallyTx reports a settled publication to this card with no local edit since the last sync.
 func (s *Store) cardDAVPublishedPersonUnchangedLocallyTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, resource *CardDAVResource, snapshot *PersonVCardSnapshot,
@@ -1277,7 +1271,7 @@ func (s *Store) addCardDAVImportedProjectionTx(
 		}
 	}
 	// A published card must round-trip; values the profile would rewrite stay on the card as residue.
-	published, err := s.cardDAVPersonPublishedToCardTx(ctx, tx, personID, bookID, input.Href)
+	_, published, err := matchingCardDAVPublicationTx(ctx, tx, personID, bookID, input.Href)
 	if err != nil {
 		return err
 	}
