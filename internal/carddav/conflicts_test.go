@@ -1792,6 +1792,7 @@ func TestRemoteEditToPublishedContactOccurrences(t *testing.T) {
 		{name: "unchanged user FN", types: []string{""}, before: "e1@example.test", after: "e1b@example.test", userFN: true, want: "e1b@example.test"},
 		{name: "user URL", before: "https://example.test/before", after: "https://example.test/after", conflict: "URL", keepRemote: true},
 		{name: "structured name", before: "N:Example;Alice", after: "N:Changed;Alice", conflict: "N", keepRemote: true},
+		{name: "remote rename with structured name", before: "FN:Alice Example", after: "FN:Renamed Example", conflict: "N"},
 		{name: "remote phone edit", phone: true, before: "TEL:+12025550102", after: "TEL:tel:+12025550103", want: "+12025550103"},
 		{name: "remote phone visual separators", phone: true, before: "TEL:+12025550102", after: "TEL:tel: +1 (202) 555-01.03 ", want: "+1 (202) 555-01.03"},
 		{name: "remote phone text", phone: true, before: "TEL:+12025550102", after: "TEL;VALUE=text:call the front desk", conflict: "TEL"},

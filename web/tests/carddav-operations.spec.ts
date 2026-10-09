@@ -164,7 +164,7 @@ test('keyboard journey configures CardDAV, reconciles roles, syncs history, and 
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Synthetic Local');
   await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Deleted. This side is a deletion tombstone.');
-  await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('Additional name, email, or phone values are not shown.');
+  await expect(page.getByRole('region', { name: 'CardDAV conflict 41 comparison' })).toContainText('More values are omitted.');
 
   await submitConflictChoice(page, 'Keep local card');
   await expect(page.getByRole('alert')).toContainText('Choose again to resolve it.');
