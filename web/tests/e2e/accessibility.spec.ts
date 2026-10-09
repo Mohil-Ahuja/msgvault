@@ -521,7 +521,7 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
     await expect(comparison).toContainText('Present');
     await expect(comparison).toContainText('Deleted. This side is a deletion tombstone.');
     await expect(comparison).toContainText('Unavailable. No safe comparison summary is available.');
-    await expect(page.getByText('Only display name, email addresses, and phone numbers are shown. Your choice applies to the whole card.')).toBeVisible();
+    await expect(page.getByText('The comparison includes contact values, labels and profile addresses. Your choice applies to the whole card.')).toBeVisible();
     const baseBox = await page.getByLabel('Base card summary').boundingBox();
     const localBox = await page.getByLabel('Local card summary').boundingBox();
     expect(baseBox).not.toBeNull();
