@@ -2419,7 +2419,7 @@ func TestKeepRemoteRetiresOnlyDisplacedEmploymentField(t *testing.T) {
 				employment, err = st.UpdateEmploymentContext(t.Context(), employment.ID, employment.Revision, input)
 				require.NoError(err)
 				require.NoError(service.ReconcilePublications(t.Context()))
-				require.Less(strings.Index(string(fixture.body), "ROLE:Developer"), strings.Index(string(fixture.body), "TITLE:Engineer"))
+				require.Less(bytes.Index(fixture.body, []byte("ROLE:Developer")), bytes.Index(fixture.body, []byte("TITLE:Engineer")))
 			}
 			var sibling *store.Employment
 			if tc.sibling {

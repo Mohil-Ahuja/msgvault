@@ -354,8 +354,8 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: identityMatchEvidenceSourcesTableName, KeyColumn: "evidence_id",
 		KeyColumns: []string{"evidence_id", sourceIDColumnName},
 	},
-	"employments": {
-		TableName: "employments", KeyColumn: "id", Snapshot: true,
+	employmentsTableName: {
+		TableName: employmentsTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
 	"activity_event_persons": {

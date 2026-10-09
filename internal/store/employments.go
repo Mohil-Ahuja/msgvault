@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
+const employmentsTableName = "employments"
+
 var (
 	ErrEmploymentNotFound         = errors.New("employment not found")
 	ErrEmploymentRevisionConflict = errors.New("employment revision conflict")

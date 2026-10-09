@@ -180,7 +180,7 @@ func (s *Store) installPostgresDirectoryProjectionTriggers(ctx context.Context) 
 	}
 	for _, tableAndColumn := range [][2]string{
 		{"persons", "id"}, {personNamesTableName, personMergePersonIDColumn}, {personContactPointsTableName, personMergePersonIDColumn},
-		{"person_categories", personMergePersonIDColumn}, {"employments", personMergePersonIDColumn}, {"person_contact_state", personMergePersonIDColumn},
+		{"person_categories", personMergePersonIDColumn}, {employmentsTableName, personMergePersonIDColumn}, {"person_contact_state", personMergePersonIDColumn},
 	} {
 		name := "directory_dirty_" + tableAndColumn[0]
 		if _, err := s.db.ExecContext(ctx, `CREATE OR REPLACE TRIGGER `+name+` AFTER INSERT OR UPDATE OR DELETE ON `+tableAndColumn[0]+`

@@ -43,11 +43,12 @@ func TestProjectConflictContactAllowListsNormalizesAndBoundsFields(t *testing.T)
 }
 
 func TestProjectConflictContactTombstoneAndMalformedAreFixed(t *testing.T) {
+	assertions := assert.New(t)
 	deleted := projectConflictContact([]byte("credential=private-secret"), true)
-	assert.Equal(t, ContactSummary{State: ConflictSideDeleted, Emails: []string{}, Phones: []string{}}, deleted)
+	assertions.Equal(ContactSummary{State: ConflictSideDeleted, Emails: []string{}, Phones: []string{}}, deleted)
 
 	unavailable := projectConflictContact([]byte("not a vcard private-parser-marker"), false)
-	assert.Equal(t, ContactSummary{State: ConflictSideUnavailable, Emails: []string{}, Phones: []string{}}, unavailable)
+	assertions.Equal(ContactSummary{State: ConflictSideUnavailable, Emails: []string{}, Phones: []string{}}, unavailable)
 	t.Run("undecodable optional address preserves email", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -72,7 +73,7 @@ func TestProjectConflictContactTombstoneAndMalformedAreFixed(t *testing.T) {
 	})
 	encoded, err := json.Marshal(unavailable)
 	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "private-parser-marker")
+	assertions.NotContains(string(encoded), "private-parser-marker")
 }
 
 func TestProjectConflictContactPreservesWhitespaceSeparatorsAndExactDeduplication(t *testing.T) {

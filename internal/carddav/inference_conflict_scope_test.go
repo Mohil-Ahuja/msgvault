@@ -287,6 +287,12 @@ func TestConflictOwnedAbsentCreateRecovery(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(pending.PreviousMappingRevision, mapping.MappingRevision)
 				if change == "capability" {
+					require.ErrorIs(service.ResolveConflict(t.Context(), c.ID, ResolutionKeepRemote), store.ErrCardDAVConflictStale)
+					c, err = st.GetCardDAVConflictContext(t.Context(), c.ID)
+					require.NoError(err)
+					assert.Equal(store.CardDAVConflictUnresolved, c.Status)
+					assert.Contains(string(c.LocalBody), "New inference after captured intent")
+					assert.Zero(fixture.puts)
 					require.NoError(service.ResolveConflict(t.Context(), c.ID, ResolutionKeepRemote))
 					require.NoError(st.SetCardDAVBookRolesContext(t.Context(), book.ID, store.CardDAVBookRoles{}))
 					return

@@ -1425,7 +1425,7 @@ func (s *Store) rebaseCardDAVImportedProjectionTx(
 					return false, err
 				}
 				if retired {
-					if mapping.Table == "employments" {
+					if mapping.Table == employmentsTableName {
 						displacedEmployments[mapping.RowID] = append(displacedEmployments[mapping.RowID], mapping.Field)
 					}
 					continue
@@ -1537,7 +1537,7 @@ func (s *Store) retireDisplacedCardDAVOwnerTx(
 	ctx context.Context, tx *loggedTx, personID int64, envelope *vcard.ResourceEnvelope, mapping vcard.NativeMapping,
 ) (bool, error) {
 	// Employment fields and derived names keep their other mappings when one occurrence is displaced.
-	independentFields := mapping.Table == "employments" || mapping.Field == "derived_fn"
+	independentFields := mapping.Table == employmentsTableName || mapping.Field == "derived_fn"
 	envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
 		return candidate.Table == mapping.Table && candidate.RowID == mapping.RowID &&
 			(!independentFields || candidate.Field == mapping.Field)
@@ -1561,7 +1561,7 @@ func (s *Store) retireDisplacedCardDAVOwnerTx(
 		supersede = s.supersedePersonMediaTx
 	case personAttributeValuesTableName:
 		return true, s.closeDisplacedCardDAVAttributeTx(ctx, tx, personID, mapping.RowID)
-	case "employments":
+	case employmentsTableName:
 		return true, nil
 	case personRelationshipsTableName:
 		return true, s.supersedeDisplacedCardDAVRelationshipTx(ctx, tx, personID, mapping.RowID)
@@ -1625,7 +1625,7 @@ func (s *Store) retireDisplacedCardDAVEmploymentFieldsTx(
 	original := update
 	releaseMappings := func() {
 		envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(candidate vcard.NativeMapping) bool {
-			return candidate.Table == "employments" && candidate.RowID == employmentID
+			return candidate.Table == employmentsTableName && candidate.RowID == employmentID
 		})
 	}
 	for _, field := range fields {
