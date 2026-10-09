@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS persons (
     display_name              TEXT,
     revision                  BIGINT NOT NULL DEFAULT 1,
     vcard_projection_revision BIGINT NOT NULL DEFAULT 1,
-    carddav_cleanup_retained   BOOLEAN NOT NULL DEFAULT FALSE,
+    carddav_cleanup_retained  BOOLEAN NOT NULL DEFAULT FALSE,
     created_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
