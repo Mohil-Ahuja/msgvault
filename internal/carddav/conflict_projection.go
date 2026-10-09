@@ -115,7 +115,11 @@ func projectConflictEnvelope(envelope vcard.ResourceEnvelope, changed map[string
 		}
 		value, err := publicConflictPropertyValue(envelope.RenderMetadata.StoredVersion, property)
 		if err != nil {
-			return emptyContactSummary(ConflictSideUnavailable)
+			if name == "FN" || name == "EMAIL" || name == "TEL" {
+				return emptyContactSummary(ConflictSideUnavailable)
+			}
+			summary.Truncated = true
+			continue
 		}
 		switch name {
 		case "EMAIL":

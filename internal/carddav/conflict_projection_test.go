@@ -43,15 +43,36 @@ func TestProjectConflictContactAllowListsNormalizesAndBoundsFields(t *testing.T)
 }
 
 func TestProjectConflictContactTombstoneAndMalformedAreFixed(t *testing.T) {
-	assert := assert.New(t)
 	deleted := projectConflictContact([]byte("credential=private-secret"), true)
-	assert.Equal(ContactSummary{State: ConflictSideDeleted, Emails: []string{}, Phones: []string{}}, deleted)
+	assert.Equal(t, ContactSummary{State: ConflictSideDeleted, Emails: []string{}, Phones: []string{}}, deleted)
 
 	unavailable := projectConflictContact([]byte("not a vcard private-parser-marker"), false)
-	assert.Equal(ContactSummary{State: ConflictSideUnavailable, Emails: []string{}, Phones: []string{}}, unavailable)
+	assert.Equal(t, ContactSummary{State: ConflictSideUnavailable, Emails: []string{}, Phones: []string{}}, unavailable)
+	t.Run("undecodable optional address preserves email", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		body := []byte("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Example\r\nEMAIL:person@example.test\r\nADR;CHARSET=unsupported:;;private-address;;;;\r\nEND:VCARD\r\n")
+		got := projectConflictContact(body, false)
+		assert.Equal(ConflictSidePresent, got.State)
+		assert.Equal("Example", got.DisplayName)
+		assert.Equal([]string{"person@example.test"}, got.Emails)
+		assert.Empty(got.Fields)
+		assert.True(got.Truncated)
+		remoteBody := []byte(strings.ReplaceAll(string(body), "private-address", "private-remote"))
+		local, remote := projectConflictComparison(body, remoteBody, false, false)
+		for index, summary := range []ContactSummary{local, remote} {
+			assert.Equal(ConflictSidePresent, summary.State)
+			assert.Equal([]string{"person@example.test"}, summary.Emails)
+			assert.True(summary.Truncated)
+			assert.Contains(summary.Fields, ContactField{Name: "ADR", Value: "Contents hidden", Labels: []string{[]string{"Address fields differ from remote", "Address fields differ from local"}[index]}})
+		}
+		encoded, err := json.Marshal([]ContactSummary{local, remote})
+		require.NoError(err)
+		assert.NotContains(string(encoded), "private-")
+	})
 	encoded, err := json.Marshal(unavailable)
 	require.NoError(t, err)
-	assert.NotContains(string(encoded), "private-parser-marker")
+	assert.NotContains(t, string(encoded), "private-parser-marker")
 }
 
 func TestProjectConflictContactPreservesWhitespaceSeparatorsAndExactDeduplication(t *testing.T) {
