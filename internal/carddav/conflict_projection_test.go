@@ -115,3 +115,82 @@ func TestProjectConflictHiddenDifferencesIdentifyPrivateFields(t *testing.T) {
 	assert.NotContains(string(encoded), "private-local")
 	assert.NotContains(string(encoded), "private-remote")
 }
+
+func TestProjectConflictStructuredComponentsPreservePositionsAndEscapes(t *testing.T) {
+	for _, tc := range []struct{ name, version, property, want string }{
+		{"street", "4.0", "ADR:;;Example;;;;", `Street: "Example"`},
+		{"po-box", "4.0", "ADR:Example;;;;;;", `PO box: "Example"`},
+		{"escaped", "4.0", `ADR:;;Example\;Suite;;;;`, `Street: "Example;Suite"`},
+		{"separated", "4.0", "ADR:;;Example;Suite;;;", `Street: "Example"; City: "Suite"`},
+		{"family", "3.0", "N:Example;;;;", `Family: "Example"`},
+		{"given", "3.0", "N:;Example;;;", `Given: "Example"`},
+		{"organization", "4.0", "ORG:Example", `Organization: "Example"`},
+		{"unit", "4.0", "ORG:;Example", `Unit 1: "Example"`},
+		{"quoted-printable", "2.1", `ADR;ENCODING=QUOTED-PRINTABLE:;;Example=5C=3BSuite;;;;`, `Street: "Example;Suite"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			body := []byte("BEGIN:VCARD\r\nVERSION:" + tc.version + "\r\nFN:Example\r\n" + tc.property + "\r\nEND:VCARD\r\n")
+			got := projectConflictContact(body, false)
+			require.Equal(ConflictSidePresent, got.State)
+			require.Len(got.Fields, 1)
+			assert.Equal(tc.want, got.Fields[0].Value)
+		})
+	}
+}
+
+func TestProjectConflictComparisonMarksHiddenAndBoundedDifferences(t *testing.T) {
+	for _, name := range []string{"IMPP", "NICKNAME", "LANG", "SOUND", "KEY", "X-SECRET-NAME"} {
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\n" + name + ":private-local\r\nEND:VCARD\r\n")
+			remoteBody := []byte(strings.ReplaceAll(string(body), "private-local", "private-remote"))
+			local, remote := projectConflictComparison(body, remoteBody, false, false)
+			require.Len(local.Fields, 1)
+			require.Len(remote.Fields, 1)
+			assert.Equal("Contents hidden", remote.Fields[0].Value)
+			assert.NotEqual(local.Fields[0].Labels, remote.Fields[0].Labels)
+			encoded, err := json.Marshal([]ContactSummary{local, remote})
+			require.NoError(err)
+			assert.NotContains(string(encoded), "private-")
+			assert.NotContains(string(encoded), "X-SECRET-NAME")
+		})
+	}
+	for _, scenario := range []string{"clipped-value", "clipped-parameter", "overflow", "normalized"} {
+		t.Run(scenario, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			property := "TITLE:" + strings.Repeat("界", 100) + "local"
+			if scenario == "clipped-parameter" {
+				property = "EMAIL;LABEL=" + strings.Repeat("x", 260) + "local:example@example.test"
+			}
+			if scenario == "normalized" {
+				property = "TITLE:local  value"
+			}
+			if scenario == "overflow" {
+				property = strings.Repeat("ADR:;;Example Street;;;;\r\n", 9) + "IMPP:local"
+			}
+			body := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Example\r\n" + property + "\r\nEND:VCARD\r\n")
+			remoteBody := []byte(strings.ReplaceAll(string(body), "local", "remote"))
+			if scenario == "normalized" {
+				remoteBody = []byte(strings.ReplaceAll(string(body), "local  value", "local value"))
+			}
+			local, remote := projectConflictComparison(body, remoteBody, false, false)
+			assert.NotEqual(local.Fields, remote.Fields)
+			for _, summary := range []ContactSummary{local, remote} {
+				assert.LessOrEqual(len(summary.Fields), maxPublicContactValues)
+				for _, field := range summary.Fields {
+					assert.LessOrEqual(len(field.Value), maxPublicCardDAVValueBytes)
+					assert.True(utf8.ValidString(field.Value))
+					assert.LessOrEqual(len(field.Labels), maxPublicContactValues)
+				}
+			}
+			if scenario != "normalized" {
+				require.True(remote.Truncated)
+				assert.Equal("Additional differences omitted", remote.Fields[len(remote.Fields)-1].Value)
+			}
+		})
+	}
+}

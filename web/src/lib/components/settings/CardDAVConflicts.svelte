@@ -25,14 +25,9 @@
     FN: 'Display name', N: 'Structured name', EMAIL: 'Email address', TEL: 'Phone number',
     ADR: 'Address', ORG: 'Organization', TITLE: 'Job title', ROLE: 'Role',
     BDAY: 'Birthday', ANNIVERSARY: 'Anniversary', CATEGORIES: 'Categories',
-    NOTE: 'Notes', RELATED: 'Relationship', URL: 'Website', PHOTO: 'Photo'
+    NOTE: 'Notes', RELATED: 'Relationship', URL: 'Website', PHOTO: 'Photo',
+    IMPP: 'Messaging address', NICKNAME: 'Nickname', LANG: 'Language', SOUND: 'Pronunciation', KEY: 'Public key', OTHER: 'Other field'
   };
-
-  function fieldValue(name: string, value: string): string {
-    return ['ADR', 'N', 'ORG'].includes(name)
-      ? value.split(';').map(part => part.trim()).filter(Boolean).join(', ')
-      : value;
-  }
 
   function fieldLabel(label: string): string {
     const separator = label.indexOf('=');
@@ -273,7 +268,7 @@
                     </div>
                     {/if}
                     {#each card.summary.fields ?? [] as field}
-                      <div><dt>{fieldLabels[field.name] ?? field.name}</dt><dd>{fieldValue(field.name, field.value)}{#if field.labels.length}<span class="field-labels">{field.labels.map(fieldLabel).join(', ')}</span>{/if}</dd></div>
+                      <div><dt>{fieldLabels[field.name] ?? field.name}</dt><dd>{field.value}{#if field.labels.length}<span class="field-labels">{field.labels.map(fieldLabel).join(', ')}</span>{/if}</dd></div>
                     {/each}
                   </dl>
                   {#if card.summary.truncated}<p class="truncated">More values are omitted.</p>{/if}

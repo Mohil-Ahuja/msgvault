@@ -71,9 +71,7 @@ func (s *Service) GetConflictView(ctx context.Context, id int64) (*ConflictDetai
 	if source.BaseAvailable {
 		base = projectConflictContact(source.BaseBody, false)
 	}
-	local := projectConflictContact(source.LocalBody, source.LocalTombstone)
-	remote := projectConflictContact(source.RemoteBody, source.RemoteTombstone)
-	projectConflictHiddenDifferences(source.LocalBody, source.RemoteBody, &local, &remote)
+	local, remote := projectConflictComparison(source.LocalBody, source.RemoteBody, source.LocalTombstone, source.RemoteTombstone)
 	return &ConflictDetail{
 		ID: source.ID, AddressBook: publicAddressBookIdentity(source.AddressBookID, source.AddressBookName),
 		Status: source.Status, Resolution: source.Resolution, Base: base,

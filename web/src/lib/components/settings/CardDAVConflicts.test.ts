@@ -44,7 +44,7 @@ function conflictDetail(id: number, overrides: Record<string, unknown> = {}) {
       display_name: 'Synthetic Contact',
       emails: ['contact@example.test'],
       phones: ['+1 555 0100'],
-      fields: [{ name: 'EMAIL', value: 'contact@example.test', labels: ['TYPE=home'], ...forbidden }, { name: 'ADR', value: ';;123 Example Street;Example City;;;', labels: ['TYPE=work'], ...forbidden }],
+      fields: [{ name: 'EMAIL', value: 'contact@example.test', labels: ['TYPE=home'], ...forbidden }, { name: 'ADR', value: 'Street: "123 Example Street"; City: "Example City"', labels: ['TYPE=work'], ...forbidden }],
       truncated: true
     }),
     local: contactSummary('deleted', { display_name: 'MUST-NOT-RENDER-LOCAL' }),
@@ -155,7 +155,7 @@ describe('CardDAVConflicts', () => {
     expect(within(detail).getByText('Present')).toBeDefined();
     expect(within(detail).getByText('Synthetic Contact')).toBeDefined();
     expect(within(detail).getByText('home')).toBeDefined();
-    expect(within(detail).getByText('123 Example Street, Example City')).toBeDefined();
+    expect(within(detail).getByText('Street: "123 Example Street"; City: "Example City"')).toBeDefined();
     expect(within(detail).getByText('contact@example.test')).toBeDefined();
     expect(within(detail).getByText('+1 555 0100')).toBeDefined();
     expect(within(detail).getByText('More values are omitted.')).toBeDefined();

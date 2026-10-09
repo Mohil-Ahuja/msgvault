@@ -2962,3 +2962,52 @@ func TestRemoteDeleteKeepsManualRemovalAfterETagRefreshAndNameEdit(t *testing.T)
 	_, err = st.GetPersonContext(t.Context(), personID)
 	assert.NoError(err)
 }
+
+func TestPublishedNativeFieldConflictViewHidesContents(t *testing.T) {
+	for _, field := range []string{"IMPP", "NICKNAME", "LANG", "SOUND", "KEY"} {
+		t.Run(field, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			fixture, service, st, personID := publishedImportFixture(t)
+			value := "https://example.test/private-local"
+			var err error
+			switch field {
+			case "NICKNAME":
+				_, err = st.AddPersonNameContext(t.Context(), personID, store.PersonNameInput{NameKind: store.PersonNameNickname, Formatted: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			case "IMPP", "LANG":
+				kind := store.ContactAddressIMPP
+				if field == "LANG" {
+					kind = store.ContactAddressLanguage
+					value = "en"
+				}
+				_, err = st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{AddressKind: kind, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			default:
+				kind := store.PersonMediaSound
+				if field == "KEY" {
+					kind = store.PersonMediaKey
+				}
+				_, err = st.AddPersonMediaContext(t.Context(), personID, store.PersonMediaInput{MediaKind: kind, URI: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			}
+			require.NoError(err)
+			require.NoError(service.ReconcilePublications(t.Context()))
+			require.Contains(string(fixture.body), field)
+			edited := bytes.ReplaceAll(fixture.body, []byte("private-local"), []byte("private-remote"))
+			if field == "LANG" {
+				edited = bytes.ReplaceAll(fixture.body, []byte("LANG:en"), []byte("LANG:de"))
+			}
+			fixture.setRemote(edited, `"native-edit"`)
+			_, err = service.Sync(t.Context(), SyncOptions{Full: true})
+			require.NoError(err)
+			conflicts, err := service.ListConflicts(t.Context())
+			require.NoError(err)
+			require.Len(conflicts, 1)
+			view, err := service.GetConflictView(t.Context(), conflicts[0].ID)
+			require.NoError(err)
+			require.Len(view.Local.Fields, 1)
+			require.Len(view.Remote.Fields, 1)
+			assert.Equal(field, view.Remote.Fields[0].Name)
+			assert.Equal("Contents hidden", view.Remote.Fields[0].Value)
+			assert.NotEqual(view.Local.Fields[0].Labels, view.Remote.Fields[0].Labels)
+		})
+	}
+}

@@ -1,7 +1,9 @@
 package carddav
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -86,10 +88,24 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 	if err != nil {
 		return emptyContactSummary(ConflictSideUnavailable)
 	}
+	return projectConflictEnvelope(envelope, nil)
+}
+
+func projectConflictEnvelope(envelope vcard.ResourceEnvelope, changed map[string]bool) ContactSummary {
 	summary := emptyContactSummary(ConflictSidePresent)
 	emails := make(map[string]struct{})
 	phones := make(map[string]struct{})
-	for _, occurrence := range envelope.PropertyTree {
+	occurrences := append([]vcard.PropertyOccurrence(nil), envelope.PropertyTree...)
+	slices.SortStableFunc(occurrences, func(a, b vcard.PropertyOccurrence) int {
+		if changed[strings.ToUpper(a.Property.Name)] == changed[strings.ToUpper(b.Property.Name)] {
+			return 0
+		}
+		if changed[strings.ToUpper(a.Property.Name)] {
+			return -1
+		}
+		return 1
+	})
+	for _, occurrence := range occurrences {
 		property := occurrence.Property
 		name := strings.ToUpper(property.Name)
 		switch name {
@@ -97,7 +113,7 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 		default:
 			continue
 		}
-		value, err := cardDAVPropertyValue(envelope.RenderMetadata.StoredVersion, property)
+		value, err := publicConflictPropertyValue(envelope.RenderMetadata.StoredVersion, property)
 		if err != nil {
 			return emptyContactSummary(ConflictSideUnavailable)
 		}
@@ -129,7 +145,7 @@ func projectConflictContact(body []byte, tombstone bool) ContactSummary {
 				labels = append(labels, label)
 			}
 		}
-		if len(labels) > 0 || (name != "FN" && name != "EMAIL" && name != "TEL") {
+		if changed[name] || len(labels) > 0 || (name != "FN" && name != "EMAIL" && name != "TEL") {
 			if len(summary.Fields) < maxPublicContactValues {
 				fieldValue, clipped := capPublicCardDAVText(value)
 				summary.Truncated = summary.Truncated || clipped
@@ -201,43 +217,161 @@ func capPublicCardDAVText(value string) (string, bool) {
 	return value[:end], true
 }
 
+func publicConflictPropertyValue(version vcard.Version, property vcard.Property) (string, error) {
+	name := strings.ToUpper(property.Name)
+	if name != "ADR" && name != "N" && name != "ORG" {
+		return cardDAVPropertyValue(version, property)
+	}
+	for _, parameter := range property.ParametersNamed("VALUE") {
+		if len(parameter.Values) > 0 && !strings.EqualFold(parameter.Values[0].Decoded, "text") {
+			return property.RawValue, nil
+		}
+	}
+	raw, err := vcard.DecodeTextRawValue(property)
+	if err != nil {
+		return "", err
+	}
+	parts, err := vcard.SplitStructuredText(raw)
+	if err != nil {
+		return "", err
+	}
+	labels := map[string][]string{
+		"ADR": {"PO box", "Extended address", "Street", "City", "Region", "Postal code", "Country"},
+		"N":   {"Family", "Given", "Additional", "Prefix", "Suffix"},
+		"ORG": {"Organization"},
+	}[name]
+	values := []string{}
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		label := fmt.Sprintf("Component %d", index+1)
+		if index < len(labels) {
+			label = labels[index]
+		} else if name == "ORG" {
+			label = fmt.Sprintf("Unit %d", index)
+		}
+		values = append(values, label+": "+strconv.Quote(part))
+	}
+	return strings.Join(values, "; "), nil
+}
+
+func conflictChangedProperties(local, remote vcard.ResourceEnvelope) map[string]bool {
+	properties := func(envelope vcard.ResourceEnvelope) map[string][]vcard.SemanticProperty {
+		values := make(map[string][]vcard.SemanticProperty)
+		for _, occurrence := range envelope.PropertyTree {
+			name := strings.ToUpper(occurrence.Property.Name)
+			switch name {
+			case "BEGIN", "END", "VERSION", "UID", "PRODID", "REV", "CLIENTPIDMAP":
+				continue
+			}
+			values[name] = append(values[name], vcard.NormalizeSemanticProperty(envelope.RenderMetadata.StoredVersion, occurrence.Property))
+		}
+		for _, group := range values {
+			slices.SortFunc(group, vcard.CompareSemanticProperties)
+		}
+		return values
+	}
+	left, right := properties(local), properties(remote)
+	changed := make(map[string]bool)
+	for name := range right {
+		if _, ok := left[name]; !ok {
+			left[name] = nil
+		}
+	}
+	for name, values := range left {
+		if !slices.EqualFunc(values, right[name], func(a, b vcard.SemanticProperty) bool { return vcard.CompareSemanticProperties(a, b) == 0 }) {
+			changed[name] = true
+		}
+	}
+	return changed
+}
+
+func projectConflictComparison(localBody, remoteBody []byte, localDeleted, remoteDeleted bool) (ContactSummary, ContactSummary) {
+	localEnvelope, localErr := vcard.ParseResourceEnvelope(localBody)
+	remoteEnvelope, remoteErr := vcard.ParseResourceEnvelope(remoteBody)
+	local, remote := emptyContactSummary(ConflictSideUnavailable), emptyContactSummary(ConflictSideUnavailable)
+	if localDeleted {
+		local.State = ConflictSideDeleted
+	}
+	if remoteDeleted {
+		remote.State = ConflictSideDeleted
+	}
+	changed := map[string]bool{}
+	if localErr == nil && remoteErr == nil && !localDeleted && !remoteDeleted {
+		changed = conflictChangedProperties(localEnvelope, remoteEnvelope)
+	}
+	if localErr == nil && !localDeleted {
+		local = projectConflictEnvelope(localEnvelope, changed)
+	}
+	if remoteErr == nil && !remoteDeleted {
+		remote = projectConflictEnvelope(remoteEnvelope, changed)
+	}
+	projectConflictDifferenceMarkers(changed, &local, &remote)
+	return local, remote
+}
+
 func projectConflictHiddenDifferences(localBody, remoteBody []byte, local, remote *ContactSummary) {
+	left, err := vcard.ParseResourceEnvelope(localBody)
+	if err != nil {
+		return
+	}
+	right, err := vcard.ParseResourceEnvelope(remoteBody)
+	if err != nil {
+		return
+	}
+	projectConflictDifferenceMarkers(conflictChangedProperties(left, right), local, remote)
+}
+
+func projectConflictDifferenceMarkers(changed map[string]bool, local, remote *ContactSummary) {
 	if local.State != ConflictSidePresent || remote.State != ConflictSidePresent {
 		return
 	}
-	localEnvelope, err := vcard.ParseResourceEnvelope(localBody)
-	if err != nil {
-		return
+	names := make([]string, 0, len(changed))
+	for name := range changed {
+		names = append(names, name)
 	}
-	remoteEnvelope, err := vcard.ParseResourceEnvelope(remoteBody)
-	if err != nil {
-		return
-	}
-	properties := func(envelope vcard.ResourceEnvelope, name string) []vcard.SemanticProperty {
-		values := []vcard.SemanticProperty{}
-		for _, occurrence := range envelope.PropertyTree {
-			if strings.EqualFold(occurrence.Property.Name, name) {
-				values = append(values, vcard.NormalizeSemanticProperty(envelope.RenderMetadata.StoredVersion, occurrence.Property))
+	slices.Sort(names)
+	for _, side := range []struct {
+		summary *ContactSummary
+		other   string
+	}{{local, "remote"}, {remote, "local"}} {
+		omitted := false
+		for _, name := range names {
+			shown := false
+			for index := range side.summary.Fields {
+				field := &side.summary.Fields[index]
+				if field.Name != name {
+					continue
+				}
+				shown = true
+				if len(field.Labels) == maxPublicContactValues {
+					field.Labels = field.Labels[:maxPublicContactValues-1]
+					side.summary.Truncated = true
+				}
+				field.Labels = append(field.Labels, "Differs from "+side.other)
 			}
-		}
-		slices.SortFunc(values, vcard.CompareSemanticProperties)
-		return values
-	}
-	for _, name := range []string{"NOTE", "RELATED", "URL", "PHOTO"} {
-		if slices.EqualFunc(properties(localEnvelope, name), properties(remoteEnvelope, name), func(a, b vcard.SemanticProperty) bool {
-			return vcard.CompareSemanticProperties(a, b) == 0
-		}) {
-			continue
-		}
-		for _, side := range []struct {
-			summary *ContactSummary
-			other   string
-		}{{local, "remote"}, {remote, "local"}} {
-			if len(side.summary.Fields) == maxPublicContactValues {
-				side.summary.Truncated = true
+			if shown {
 				continue
 			}
-			side.summary.Fields = append(side.summary.Fields, ContactField{Name: name, Value: "Contents hidden", Labels: []string{"Differs from " + side.other}})
+			if len(side.summary.Fields) >= maxPublicContactValues-1 {
+				omitted = true
+				continue
+			}
+			safeName := name
+			switch name {
+			case "FN", "N", "EMAIL", "TEL", "ADR", "ORG", "TITLE", "ROLE", "BDAY", "ANNIVERSARY", "CATEGORIES", "NOTE", "RELATED", "URL", "PHOTO", "IMPP", "NICKNAME", "LANG", "SOUND", "KEY":
+			default:
+				safeName = "OTHER"
+			}
+			side.summary.Fields = append(side.summary.Fields, ContactField{Name: safeName, Value: "Contents hidden", Labels: []string{"Differs from " + side.other}})
+		}
+		if len(names) > 0 && (omitted || side.summary.Truncated) {
+			if len(side.summary.Fields) >= maxPublicContactValues {
+				side.summary.Fields = side.summary.Fields[:maxPublicContactValues-1]
+			}
+			side.summary.Truncated = true
+			side.summary.Fields = append(side.summary.Fields, ContactField{Name: "OTHER", Value: "Additional differences omitted", Labels: []string{"Differs from " + side.other}})
 		}
 	}
 }

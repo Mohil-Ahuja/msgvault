@@ -396,8 +396,9 @@ connection's credential needs repair.
 If both msgvault and the address book changed the same card, msgvault records a
 conflict for review. A remote-only edit to a field the pull cannot apply on a
 published contact also raises a conflict. The comparison shows field values
-and labels, including saved profile addresses. For private notes, relationships,
-websites and photos, it names the changed field and hides its contents. msgvault
+and labels, including saved profile addresses with named components such as
+street and PO box. Fields outside the comparison show "Contents hidden".
+Additional differences omitted by the display limits are marked. msgvault
 records edit/delete conflicts instead of silently choosing a side.
 
 ```bash

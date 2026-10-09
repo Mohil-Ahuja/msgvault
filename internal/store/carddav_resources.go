@@ -719,33 +719,35 @@ func cardDAVRebindOwners(stored, incoming vcard.ResourceEnvelope) ([]cardDAVReso
 	return owners, nil
 }
 
-// cardDAVPersonPublishedToCardTx reports whether msgvault publishes the person to this card.
-func (s *Store) cardDAVPersonPublishedToCardTx(
-	ctx context.Context, tx *loggedTx, personID, bookID int64, href string,
-) (bool, error) {
+func matchingCardDAVPublicationTx(ctx context.Context, tx *loggedTx, personID, bookID int64, href string) (*CardDAVPublication, bool, error) {
 	publication, err := getCardDAVPublicationFrom(ctx, tx, personID, "")
 	if errors.Is(err, ErrCardDAVPublicationNotFound) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("load CardDAV publication for imported projection: %w", err)
+		return nil, false, fmt.Errorf("load CardDAV publication for imported projection: %w", err)
 	}
-	return publication.Desired && publication.AddressBookID == bookID && publication.Href == href, nil
+	if !publication.Desired || publication.AddressBookID != bookID || publication.Href != href {
+		return nil, false, nil
+	}
+	return publication, true, nil
+}
+
+// cardDAVPersonPublishedToCardTx reports whether msgvault publishes the person to this card.
+func (s *Store) cardDAVPersonPublishedToCardTx(ctx context.Context, tx *loggedTx, personID, bookID int64, href string) (bool, error) {
+	_, matches, err := matchingCardDAVPublicationTx(ctx, tx, personID, bookID, href)
+	return matches, err
 }
 
 // cardDAVPublishedPersonUnchangedLocallyTx reports a settled publication to this card with no local edit since the last sync.
 func (s *Store) cardDAVPublishedPersonUnchangedLocallyTx(
 	ctx context.Context, tx *loggedTx, bookID, personID int64, resource *CardDAVResource, snapshot *PersonVCardSnapshot,
 ) (bool, error) {
-	publication, err := getCardDAVPublicationFrom(ctx, tx, personID, "")
-	if errors.Is(err, ErrCardDAVPublicationNotFound) {
-		return false, nil
-	}
+	publication, matches, err := matchingCardDAVPublicationTx(ctx, tx, personID, bookID, resource.Href)
 	if err != nil {
 		return false, err
 	}
-	if !publication.Desired || publication.PendingOperation != "" ||
-		publication.AddressBookID != bookID || publication.Href != resource.Href {
+	if !matches || publication.PendingOperation != "" {
 		return false, nil
 	}
 	// The equivalent-local path passes the conflict check, so require an unchanged local side here.
