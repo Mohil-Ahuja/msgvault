@@ -70,6 +70,30 @@ func placeholderMIME(nl, boundary, filename string, contentLength int) string {
 	return strings.Join(lines, nl)
 }
 
+func TestPlaceholderFilenames(t *testing.T) {
+	const header = "Content-Type: multipart/mixed; boundary=parts\n\n"
+	const part = "--parts\nContent-Type: text/plain\n"
+	const marker = "X-Apple-Content-Length: 200\n"
+	const nested = "--parts\nContent-Type: multipart/related; boundary=inner\n\n--inner\nContent-Type: application/octet-stream\n"
+	for _, tt := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{name: "root attachment placeholder", raw: "Content-Type: application/octet-stream\nContent-Disposition: attachment; filename=root.bin\n" + marker + "\n", want: []string{"root.bin"}},
+		{name: "quoted spaces", raw: header + part + "Content-Disposition: attachment; filename=\" one.bin \"\n" + marker + "\n\n--parts--\n", want: []string{" one.bin "}},
+		{name: "boundary transport padding", raw: header + "--parts \t\r\nContent-Type: text/plain\n\nBody\n--parts\t \r\n" + marker + "\n\n--parts-- \t\r\n", want: []string{""}},
+		{name: "padded closing boundary stops counting", raw: header + part + marker + "\n\n--parts-- \t\r\n" + part + marker + "\n\n", want: []string{""}},
+		{name: "nested and top-level placeholders", raw: header + nested + marker + "\n\n--inner--\n" + part + marker + "\n\n" + part + marker + "\n\n--parts--\n", want: []string{"", "", ""}},
+		{name: "non-multipart body with boundary", raw: header + strings.Replace(nested, "multipart/related", "text/plain", 1) + marker + "\n\n--inner--\n--parts--\n"},
+		{name: "mid-line marker text", raw: header + part + "Text " + marker + "\nBody\n--parts--\n"},
+		{name: "body line quoting header", raw: header + part + "\n" + marker + "--parts--\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, PlaceholderFilenames([]byte(tt.raw)))
+		})
+	}
+}
+
 func TestParseFile_PartialRestoresAttachmentFromSiblingDir(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -111,6 +135,22 @@ func TestParseFile_RestoredAttachmentEncoding(t *testing.T) {
 			assert.Equal(t, content, parsed.Attachments[0].Content)
 		})
 	}
+}
+
+func TestParseFile_RestoresQuotedPaddedBoundary(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	raw := placeholderMIME("\n", "part boundary", "report.pdf", 200)
+	raw = strings.ReplaceAll(raw, "--part boundary\n", "--part boundary \t\n")
+	raw = strings.ReplaceAll(raw, "--part boundary--\n", "--part boundary-- \t\n")
+	path := writePartial(t, t.TempDir(), 4, raw, map[string][]byte{"2/report.pdf": []byte("report bytes")})
+	msg, err := ParseFile(path, 1<<20)
+	require.NoError(err)
+	assert.Equal(1, msg.RestoredAttachments)
+	parsed, err := mime.Parse(msg.Raw)
+	require.NoError(err)
+	require.Len(parsed.Attachments, 1)
+	assert.Equal([]byte("report bytes"), parsed.Attachments[0].Content)
 }
 
 func TestParseFile_PartialWithoutAttachmentsDirIsUnchanged(t *testing.T) {
@@ -469,10 +509,61 @@ func TestFindBoundary_ToleratesWhitespaceAroundEquals(t *testing.T) {
 	for _, tc := range []struct{ header, want string }{
 		{`Content-Type: multipart/mixed; boundary="=-b"`, "=-b"},
 		{`Content-Type: multipart/mixed; boundary=plain`, "plain"},
+		{`Content-Type: multipart/mixed; boundary="part boundary"`, "part boundary"},
+		{`Content-Type: multipart/mixed; boundary="part boundary"; boundary=other`, "part boundary"},
+		{`Content-Type: multipart/mixed; boundary=----=_Part_1_2`, "----=_Part_1_2"},
+		{`Content-Type: multipart/mixed; boundary=part/one`, "part/one"},
 		{`Content-Type: multipart/mixed; boundary = "spaced"`, "spaced"},
 		{`Content-Type: multipart/mixed; boundary= tab`, "tab"},
 		{`Content-Type: multipart/mixed; charset=utf-8; BOUNDARY="upper"`, "upper"},
 	} {
 		assert.Equal(tc.want, findBoundary([]string{tc.header}), tc.header)
+	}
+}
+
+func TestAttachmentFilename_LenientParameters(t *testing.T) {
+	for _, tt := range []struct{ value, want string }{
+		{`attachment; filename=report 2.pdf`, "report 2.pdf"},
+		{`attachment; filename="report.pdf"; empty=`, "report.pdf"},
+		{`attachment; filename==?windows-1252?Q?caf=E9.pdf?=`, "café.pdf"},
+		{`attachment; filename="=?windows-1252?Q?caf=E9.pdf?="`, "café.pdf"},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			assert.Equal(t, tt.want, attachmentFilename([]string{"Content-Disposition: " + tt.value}))
+		})
+	}
+}
+
+func TestParseFile_RestoresDecodedFilenames(t *testing.T) {
+	for _, tt := range []struct{ name, headers, cached, decoded string }{
+		{"plain", "Content-Disposition: attachment; filename=report.pdf\nContent-Type: application/pdf\n", "report.pdf", "report.pdf"},
+		{"RFC 2047", `Content-Disposition: attachment; filename="=?UTF-8?Q?report=2Epdf?="` + "\nContent-Type: application/pdf\n", "report.pdf", "report.pdf"},
+		{"RFC 2231", "Content-Disposition: attachment; filename*=UTF-8''report%2Epdf\nContent-Type: application/pdf\n", "report.pdf", "report.pdf"},
+		{"lenient name parameter", "Content-Disposition: attachment\nContent-Type: application/pdf; name=report 2.pdf\n", "report 2.pdf", "report 2.pdf"},
+		{"file parameter", "Content-Disposition: attachment\nContent-Type: application/pdf; file=report.pdf\n", "report.pdf", "report.pdf"},
+		{"name parameter", "Content-Disposition: attachment\nContent-Type: application/pdf; name=report.pdf\n", "report.pdf", "report.pdf"},
+		{"LF folded name parameter", "Content-Disposition: attachment\nContent-Type: application/pdf; name=\"report\n 2.pdf\"\n", "report 2.pdf", "report 2.pdf"},
+		{"CRLF folded name parameter", "Content-Disposition: attachment\r\nContent-Type: application/pdf; name=\"report\r\n 2.pdf\"\r\n", "report 2.pdf", "report 2.pdf"},
+		{"legacy filename before extended", `Content-Disposition: attachment; filename="legacy.pdf"; filename*=UTF-8''caf%C3%A9.pdf` + "\nContent-Type: application/pdf\n", "legacy.pdf", "café.pdf"},
+		{"extended fallback after legacy", `Content-Disposition: attachment; filename="legacy.pdf"; filename*=UTF-8''caf%C3%A9.pdf` + "\nContent-Type: application/pdf\n", "café.pdf", "café.pdf"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			const prefix = "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=parts\n\n--parts\nContent-Type: text/plain\n\nBody\n--parts\n"
+			const end = "--parts--\n"
+			content := []byte("report bytes")
+			raw := prefix + tt.headers + "X-Apple-Content-Length: 12\n\n\n" + end
+			path := writePartial(t, t.TempDir(), 5, raw, map[string][]byte{"2/" + tt.cached: content, "2/other.pdf": []byte("other bytes"), "2/report2.pdf": []byte("wrong report bytes")})
+			msg, err := ParseFile(path, 1<<20)
+			require.NoError(err)
+			assert.Equal(1, msg.RestoredAttachments)
+			assert.Equal(prefix+tt.headers+"Content-Transfer-Encoding: base64\n\n"+base64.StdEncoding.EncodeToString(content)+"\n"+end, string(msg.Raw))
+			parsed, err := mime.Parse(msg.Raw)
+			require.NoError(err)
+			require.Len(parsed.Attachments, 1)
+			assert.Equal(tt.decoded, parsed.Attachments[0].Filename)
+			assert.Equal(content, parsed.Attachments[0].Content)
+		})
 	}
 }

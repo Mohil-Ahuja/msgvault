@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -92,9 +94,22 @@ func ingestRawMessage(
 	fallbackDate time.Time,
 ) int64 {
 	t.Helper()
+	return ingestRawMessageWithAttachments(t, st, source, sourceMessageID, raw, fallbackDate, "")
+}
+
+func ingestRawMessageWithAttachments(
+	t *testing.T,
+	st *store.Store,
+	source *store.Source,
+	sourceMessageID string,
+	raw []byte,
+	fallbackDate time.Time,
+	attachmentsDir string,
+) int64 {
+	t.Helper()
 	hash := sha256.Sum256(raw)
 	err := importer.IngestRawMessage(
-		context.Background(), st, source.ID, source.Identifier, "",
+		context.Background(), st, source.ID, source.Identifier, attachmentsDir,
 		nil, sourceMessageID, hex.EncodeToString(hash[:]), raw, fallbackDate,
 		slog.New(slog.DiscardHandler),
 	)
@@ -775,6 +790,241 @@ func TestEngine_MixedNormalizedHashesIgnorePayloadCompleteness(t *testing.T) {
 			survivor := group.Messages[group.Survivor]
 			require.Equal(ids["label-rich"], survivor.ID,
 				"mixed content hashes must fall back to the group-wide label ordering")
+		})
+	}
+}
+
+func requireAttachmentCounts(t *testing.T, st *store.Store, ids []int64, want []int) {
+	t.Helper()
+	for i, id := range ids {
+		var count int
+		require.NoError(t, st.DB().QueryRow(st.Rebind("SELECT attachment_count FROM messages WHERE id = ?"), id).Scan(&count))
+		require.Equal(t, want[i], count)
+	}
+}
+
+func TestEngine_ApplePlaceholderSurvivor(t *testing.T) {
+	const header = "Message-ID: <apple-restore@example.test>\nMIME-Version: 1.0\n"
+	const body = "Content-Type: text/plain\n\nBody\n"
+	const prefix = header + "Content-Type: multipart/mixed; boundary=parts\n\n--parts\n" + body
+	const one = "--parts\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=one.bin\n"
+	const two = "--parts\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=two.bin\n"
+	const three = "--parts\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=three.bin\n"
+	const marker = "X-Apple-Content-Length: 200\n\n\n"
+	const end = "--parts--\n"
+	placeholder := []byte(prefix + one + marker + two + marker + end)
+	partial := []byte(prefix + one + "\nattachment bytes\n" + two + marker + end)
+	full := []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment bytes\n" + end)
+	truncated := []byte(prefix + one + "\nattachment\n" + two + "\nattachment B\n" + end)
+	complementaryOlder := partial
+	complementaryNewer := []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment B\n" + three + marker + end)
+	richer := []byte(prefix + one + "\nattachment bytes\n" + two + marker + three + "\nattachment bytes\n" + end)
+	shortPartial := []byte(strings.Replace(string(partial), "Body", "Bo", 1))
+	shortFull := []byte(strings.Replace(string(full), "Body", "Bo", 1))
+	repeatedA := []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment bytes\n" + three + marker + end)
+	threeDistinct := []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment B\n" + three + "\nattachment C\n" + end)
+	inlinePartial := []byte(header + "Content-Type: multipart/related; boundary=parts\n\n--parts\nContent-Type: text/html\n\n<img src=\"cid:logo\">\n" + strings.Replace(one, "attachment;", "inline;", 1) + "Content-ID: <logo>\n\nattachment bytes\n" + two + marker + end)
+	inlineFull := []byte(strings.Replace(string(inlinePartial), marker, "\nattachment B\n", 1))
+	const logo = "--parts\nContent-Type: image/png\nContent-Disposition: inline; filename=logo.png\nContent-ID: <logo>\n"
+	logoPrefix := strings.Replace(prefix, body, "Content-Type: text/html\n\n<img src=\"cid:logo\">\n", 1)
+	logoPlaceholder := []byte(logoPrefix + logo + marker + end)
+	logoFull := []byte(logoPrefix + logo + "\nattachment bytes\n" + end)
+	storageHook := func(failureCopy int, legacyDuplicate bool) func(*testing.T, *store.Store, []int64, string) {
+		return func(t *testing.T, st *store.Store, ids []int64, attachmentsDir string) {
+			t.Helper()
+			require := require.New(t)
+			failedID := ids[failureCopy]
+			requireAttachmentCounts(t, st, []int64{failedID}, []int{2})
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND id = (SELECT MAX(id) FROM attachments WHERE message_id = ?)"), failedID, failedID)
+			require.NoError(err)
+			require.NoError(st.RecomputeMessageAttachmentStats(failedID))
+			if legacyDuplicate {
+				refs, err := st.MessageMIMEAttachmentsContext(t.Context(), failedID)
+				require.NoError(err)
+				require.Len(refs, 1)
+				ref := refs[0]
+				require.NoError(st.UpsertAttachment(failedID, ref.Filename, ref.MimeType, ref.StoragePath, ref.ContentHash, ref.Size))
+				require.NoError(st.RecomputeMessageAttachmentStats(failedID))
+			}
+		}
+	}
+	for _, tt := range []struct {
+		name         string
+		older, newer []byte
+		middle       []byte
+		want         int
+		storedCounts []int
+		olderSource  string
+		newerSource  string
+		preference   []string
+		lookup       string
+		hook         func(*testing.T, *store.Store, []int64, string)
+	}{
+		{name: "placeholder replacement changes Content-ID", older: logoPlaceholder, newer: []byte(strings.Replace(string(logoFull), "<logo>", "<other>", 1)), want: 0, storedCounts: []int{0, 1}},
+		{name: "placeholder replacement loses inline disposition", older: logoPlaceholder, newer: []byte(strings.Replace(string(logoFull), "inline;", "attachment;", 1)), want: 0, storedCounts: []int{0, 1}},
+		{name: "placeholder replacement preserves inline identity", older: logoPlaceholder, newer: logoFull, want: 1, storedCounts: []int{0, 1}, lookup: "logo.png"},
+		{name: "unnamed inline placeholder changes Content-ID", older: []byte(strings.Replace(string(logoPlaceholder), "; filename=logo.png", "", 1)), newer: []byte(strings.Replace(string(logoFull), "<logo>", "<other>", 1)), want: 0, storedCounts: []int{0, 1}},
+		{name: "root attachment placeholder restored", older: []byte(header + "Content-Type: application/octet-stream\nContent-Disposition: attachment; filename=root.bin\nX-Apple-Content-Length: 200\n\n"), newer: []byte(header + "Content-Type: application/octet-stream\nContent-Disposition: attachment; filename=root.bin\n\nattachment bytes"), want: 1, storedCounts: []int{0, 1}, lookup: "root.bin"},
+		{name: "duplicate quoted boundary restores placeholders", older: []byte(strings.ReplaceAll(strings.Replace(string(placeholder), "boundary=parts", `boundary="part boundary"; boundary=other`, 1), "--parts", "--part boundary")), newer: full, want: 1, storedCounts: []int{0, 2}},
+		{name: "replacement loses inline Content-ID", older: inlinePartial, newer: []byte(strings.Replace(string(inlineFull), "Content-ID: <logo>\n", "", 1)), want: 0, storedCounts: []int{1, 2}},
+		{name: "replacement changes inline disposition", older: inlinePartial, newer: []byte(strings.Replace(string(inlineFull), "inline;", "attachment;", 1)), want: 0, storedCounts: []int{1, 2}},
+		{name: "replacement preserves inline image", older: inlinePartial, newer: inlineFull, want: 1, storedCounts: []int{1, 2}},
+		{name: "stored replacement loses inline Content-ID", older: inlinePartial, newer: inlineFull, want: 0, storedCounts: []int{1, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("UPDATE attachments SET content_id = NULL WHERE message_id = ? AND filename = ?"), ids[1], "one.bin")
+			require.NoError(t, err)
+		}},
+		{name: "stored replacement loses inline role", older: inlinePartial, newer: inlineFull, want: 0, storedCounts: []int{1, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("UPDATE attachments SET attachment_role = ? WHERE message_id = ? AND filename = ?"), store.AttachmentRoleStandalone, ids[1], "one.bin")
+			require.NoError(t, err)
+		}},
+		{name: "placeholder precedes intact identical bytes", older: []byte(prefix + one + marker + two + "\nattachment bytes\n" + end), newer: full, want: 1, storedCounts: []int{1, 2}},
+		{name: "quoted spaces preserve placeholder identity", older: []byte(prefix + strings.Replace(one, "filename=one.bin", `filename=" one.bin "`, 1) + marker + end), newer: []byte(prefix + strings.Replace(one, "filename=one.bin", `filename=" one.bin "`, 1) + "\nattachment bytes\n" + end), want: 1, storedCounts: []int{0, 1}},
+		{name: "different sender shares message ID", older: append([]byte("From: original@example.test\nSubject: Report\n"), placeholder...), newer: append([]byte("From: unrelated@example.test\nSubject: Report\n"), full...), want: 0, storedCounts: []int{0, 2}},
+		{name: "different subject shares message ID", older: append([]byte("From: original@example.test\nSubject: Report\n"), placeholder...), newer: append([]byte("From: original@example.test\nSubject: Other report\n"), full...), want: 0, storedCounts: []int{0, 2}},
+		{name: "normalized sender and subject allow restoration", older: append([]byte("From: Original@example.test\nSubject: Report\nReceived: first export\n"), placeholder...), newer: append([]byte("From: original@example.test\nSubject: Report  \nReceived: second export\n"), full...), want: 1, storedCounts: []int{0, 2}},
+		{name: "replacement preserves A restores B despite failed surplus C", older: partial, newer: threeDistinct, want: 1, storedCounts: []int{1, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND id = (SELECT MAX(id) FROM attachments WHERE message_id = ?)"), ids[1], ids[1])
+			require.NoError(t, err)
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[1]))
+		}},
+		{name: "stored surplus cannot cover missing B with identical bytes", older: partial, newer: []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment bytes\n" + three + "\nattachment C\n" + end), want: 0, storedCounts: []int{1, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND filename = ?"), ids[1], "two.bin")
+			require.NoError(t, err)
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[1]))
+		}},
+		{name: "lenient name parameter rejects unrelated attachment", older: []byte(prefix + "--parts\nContent-Type: application/pdf; name=report 2.pdf\nContent-Disposition: attachment\n" + marker + end), newer: []byte(prefix + strings.Replace(one, "one.bin", "unrelated.zip", 1) + "\nattachment bytes\n" + end), want: 0, storedCounts: []int{0, 1}},
+		{name: "file parameter rejects unrelated attachment", older: []byte(prefix + "--parts\nContent-Type: application/pdf; file=report.pdf\nContent-Disposition: attachment\n" + marker + end), newer: []byte(prefix + strings.Replace(one, "one.bin", "unrelated.zip", 1) + "\nattachment bytes\n" + end), want: 0, storedCounts: []int{0, 1}},
+		{name: "RFC 2047 filename restored", older: []byte(prefix + strings.Replace(one, "filename=one.bin", "filename=\"=?UTF-8?Q?caf=C3=A9.pdf?=\"", 1) + marker + end), newer: []byte(prefix + strings.Replace(one, "filename=one.bin", "filename=\"=?UTF-8?Q?caf=C3=A9.pdf?=\"", 1) + "\nattachment bytes\n" + end), want: 1, storedCounts: []int{0, 1}, lookup: "café.pdf"},
+		{name: "RFC 2231 filename restored", older: []byte(prefix + strings.Replace(one, "filename=one.bin", "filename*=UTF-8''caf%C3%A9.pdf", 1) + marker + end), newer: []byte(prefix + strings.Replace(one, "filename=one.bin", "filename*=UTF-8''caf%C3%A9.pdf", 1) + "\nattachment bytes\n" + end), want: 1, storedCounts: []int{0, 1}, lookup: "café.pdf"},
+		{name: "placeholder filename differs", older: []byte(prefix + strings.Replace(one, "one.bin", "report.pdf", 1) + marker + end), newer: []byte(prefix + strings.Replace(one, "one.bin", "unrelated.zip", 1) + "\nattachment bytes\n" + end), want: 0, storedCounts: []int{0, 1}},
+		{name: "repeated placeholder filename needs repeated replacement", older: []byte(prefix + one + marker + one + marker + end), newer: full, want: 0, storedCounts: []int{0, 2}},
+		{name: "older archived remote image survives", older: partial, newer: full, want: 0, storedCounts: []int{2, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, attachmentsDir string) {
+			t.Helper()
+			require.NoError(t, st.UpsertRemoteImageAttachment(t.Context(), ids[0], store.AttachmentWrite{
+				Filename: "remote-image.png", MIMEType: "image/png", StoragePath: filepath.Join(attachmentsDir, "remote-image.png"),
+				ContentHash: "remote-image-hash", SourceAttachmentID: "remote-image:chart", SourcePartKey: "remote-image:chart",
+			}))
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[0]))
+		}},
+		{name: "legacy replacement stores fewer repeats than parsed", older: []byte(prefix + one + marker + one + marker + end), newer: []byte(prefix + one + "\nattachment bytes\n" + one + "\nattachment bytes\n" + end), want: 0, storedCounts: []int{0, 1}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND id = (SELECT MAX(id) FROM attachments WHERE message_id = ?)"), ids[1], ids[1])
+			require.NoError(t, err)
+			_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET source_part_key = NULL WHERE message_id = ?"), ids[1])
+			require.NoError(t, err)
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[1]))
+		}},
+		{name: "legacy replacement cannot hide intact different filename", older: []byte(prefix + one + marker + two + "\nattachment bytes\n" + end), newer: full, want: 0, lookup: "two.bin", storedCounts: []int{1, 1}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND id = (SELECT MAX(id) FROM attachments WHERE message_id = ?)"), ids[1], ids[1])
+			require.NoError(t, err)
+			_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET source_part_key = NULL WHERE message_id = ?"), ids[1])
+			require.NoError(t, err)
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[1]))
+		}},
+		{name: "legacy replacement cannot hide intact repeated occurrence", older: []byte(prefix + one + "\nattachment bytes\n" + one + "\nattachment bytes\n" + two + marker + end), newer: []byte(prefix + one + "\nattachment bytes\n" + one + "\nattachment bytes\n" + two + "\nattachment B\n" + end), want: 0, storedCounts: []int{2, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			_, err := st.DB().Exec(st.Rebind("DELETE FROM attachments WHERE message_id = ? AND id = (SELECT MIN(id) FROM attachments WHERE message_id = ?)"), ids[1], ids[1])
+			require.NoError(t, err)
+			_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET source_part_key = NULL WHERE message_id = ?"), ids[1])
+			require.NoError(t, err)
+			require.NoError(t, st.RecomputeMessageAttachmentStats(ids[1]))
+		}},
+		{name: "unnamed placeholder restored", older: []byte(prefix + one + "\nattachment bytes\n" + strings.Replace(two, "; filename=two.bin", "", 1) + marker + end), newer: full, want: 1, storedCounts: []int{1, 2}},
+		{name: "intact filename cannot also cover placeholder", older: []byte(prefix + one + "\nattachment bytes\n" + one + marker + end), newer: full, want: 0, storedCounts: []int{1, 2}},
+		{name: "actual survivor preserves priority winner", older: partial, middle: shortPartial, newer: shortFull, want: 0, storedCounts: []int{1, 1, 2}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			messages, err := st.GetDuplicateGroupMessages("apple-restore@example.test")
+			require.NoError(t, err)
+			require.Len(t, messages, 3)
+			for _, row := range messages {
+				if row.ID == ids[0] || row.ID == ids[2] {
+					count := 2
+					if row.ID == ids[0] {
+						count = 3
+					}
+					for i := range count {
+						label := fmt.Sprintf("copy-%d-label-%d", row.ID, i)
+						linkLabel(t, st, row.SourceID, row.ID, label, label, "user")
+					}
+				}
+			}
+		}},
+		{name: "same body restored", older: placeholder, newer: full, want: 1, storedCounts: []int{0, 2}},
+		{name: "restored copies use usual order", older: placeholder, middle: full, newer: []byte(prefix + one + "\nattachment bytes\n" + two + "\nattachment bytes\n" + three + "\nattachment C\n" + end), want: 2, storedCounts: []int{0, 2, 3}, hook: func(t *testing.T, st *store.Store, ids []int64, _ string) {
+			t.Helper()
+			message, err := st.GetMessage(ids[2])
+			require.NoError(t, err)
+			linkLabel(t, st, message.SourceID, ids[2], "extra", "Extra", "user")
+			linkLabel(t, st, message.SourceID, ids[0], "first", "First", "user")
+			linkLabel(t, st, message.SourceID, ids[0], "second", "Second", "user")
+		}},
+		{name: "intact A vs truncated A plus B", want: 0, older: partial, newer: truncated, storedCounts: []int{1, 2}},
+		{name: "complementary partial caches", want: 0, older: complementaryOlder, newer: complementaryNewer, storedCounts: []int{1, 2}},
+		{name: "restored copies from preferred source", older: placeholder, middle: full, newer: full, olderSource: "emlx", preference: []string{"emlx", "gmail"}, want: 1, storedCounts: []int{0, 2, 2}},
+		{name: "two different emlx sources never supersede each other", want: 0, older: placeholder, newer: full, olderSource: "emlx", newerSource: "emlx", storedCounts: []int{0, 2}},
+		{name: "repeated A survives A B C", older: repeatedA, newer: threeDistinct, want: 0, storedCounts: []int{2, 3}},
+		{name: "keyed and legacy A with B missing", older: partial, newer: full, want: 0, hook: storageHook(1, true), storedCounts: []int{1, 2}},
+		{name: "older write failure keeps declared count from raw MIME", older: []byte(strings.Replace(string(richer), "; filename=two.bin", "", 1)), newer: []byte(strings.Replace(string(full), "two.bin", "three.bin", 1)), want: 0, hook: storageHook(0, false), storedCounts: []int{1, 2}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			copies := [][]byte{tt.older, tt.newer}
+			if tt.middle != nil {
+				copies = [][]byte{tt.older, tt.middle, tt.newer}
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			date := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+			ids := make([]int64, len(copies))
+			attachmentsDir := t.TempDir()
+			sources := []*store.Source{f.Source, f.Source, f.Source}
+			if tt.olderSource != "" {
+				var err error
+				sources[0], err = f.Store.GetOrCreateSource(tt.olderSource, "original@example.test")
+				require.NoError(err)
+				sources[1] = sources[0]
+			}
+			if tt.newerSource != "" {
+				var err error
+				sources[len(copies)-1], err = f.Store.GetOrCreateSource(tt.newerSource, "restored@example.test")
+				require.NoError(err)
+			}
+			for i := range copies {
+				ids[i] = ingestRawMessageWithAttachments(t, f.Store, sources[i], strconv.Itoa(i), copies[i], date, attachmentsDir)
+				setArchivedAt(t, f.Store, ids[i], date.Add(time.Duration(i)*time.Hour))
+			}
+			if tt.hook != nil {
+				tt.hook(t, f.Store, ids, attachmentsDir)
+			}
+			requireAttachmentCounts(t, f.Store, ids, tt.storedCounts)
+			eng := dedup.NewEngine(f.Store, dedup.Config{AccountSourceIDs: []int64{sources[0].ID, sources[len(copies)-1].ID}, SourcePreference: tt.preference}, nil)
+			report, err := eng.Scan(t.Context())
+			require.NoError(err)
+			require.Len(report.Groups, 1)
+			group := report.Groups[0]
+			require.Len(group.Messages, len(copies))
+			assert.Equal(ids[tt.want], group.Messages[group.Survivor].ID)
+			_, err = eng.Execute(t.Context(), report, "apple-placeholder")
+			require.NoError(err)
+			for i, id := range ids {
+				assertSoftDeleted(t, f.Store, id, i != tt.want)
+			}
+			if tt.lookup != "" {
+				var fileID int64
+				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM attachments WHERE message_id = ? AND filename = ?"), ids[tt.want], tt.lookup).Scan(&fileID))
+				file, err := f.Store.GetFileMetadata(t.Context(), fileID)
+				require.NoError(err)
+				require.NotNil(file)
+				assert.Equal(tt.lookup, file.Filename)
+				content, err := os.ReadFile(filepath.Join(attachmentsDir, file.StoragePath))
+				require.NoError(err)
+				assert.Equal("attachment bytes", string(content))
+			}
 		})
 	}
 }

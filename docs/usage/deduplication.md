@@ -41,6 +41,8 @@ when every eligible copy has raw MIME and all their normalized MIME hashes
 match. A shared `Message-ID` alone cannot make those payload-completeness
 signals authoritative.
 
+If the priority winner has Apple Mail placeholders, msgvault promotes the best eligible replacement in the usual order. A replacement must share its source, normalized sender, subject and bodies and have no placeholders. Its stored attachments must preserve intact attachments by content hash and decoded filename, including repeats, and preserve archived remote images. The remaining stored attachments must cover named placeholders by decoded filename and unnamed placeholders by count. Extra replacement attachments needn't be stored.
+
 Source metadata quality counts three independent facts, one point each: a
 native Gmail, IMAP, or Microsoft Mail message ID, threading evidence, and an
 RFC822 `Message-ID`.
@@ -73,6 +75,11 @@ flowchart TD
     K --> L[7. Label or folder richness]
     L --> M[8. Earlier archive timestamp]
     M --> N[9. Stable row ID]
+    N --> P{Winner has Apple Mail placeholders?}
+    P -- Yes --> Q{Eligible replacement preserves the winner?}
+    P -- No --> R[Keep priority winner]
+    Q -- Yes --> S[Promote best replacement in the usual order]
+    Q -- No --> R
 ```
 
 ## Choosing a Scope

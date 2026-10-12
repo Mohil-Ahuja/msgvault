@@ -2,10 +2,37 @@ package dedup
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestInspectDuplicateRawMIME_BodyHashNULFields(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	var rows []store.DuplicateMessageRow
+	for _, fields := range []struct{ text, html string }{{"A\x00B", "C"}, {"A", "B\x00C"}, {"A\x00B", "C"}} {
+		id := f.NewMessage().Create(t, f.Store)
+		raw := "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=parts\n\n--parts\nContent-Type: multipart/alternative; boundary=bodies\n\n--bodies\nContent-Type: text/plain\nContent-Transfer-Encoding: base64\n\n" + base64.StdEncoding.EncodeToString([]byte(fields.text)) + "\n--bodies\nContent-Type: text/html\nContent-Transfer-Encoding: base64\n\n" + base64.StdEncoding.EncodeToString([]byte(fields.html)) + "\n--bodies--\n--parts\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename=one.bin\nX-Apple-Content-Length: 200\n\n\n--parts--\n"
+		// Raw MIME stores bytes, so NUL body fields never enter PostgreSQL text columns.
+		require.NoError(f.Store.UpsertMessageRaw(id, []byte(raw)))
+		rows = append(rows, store.DuplicateMessageRow{ID: id, HasRawMIME: true})
+	}
+	engine := NewEngine(f.Store, Config{}, nil)
+	info, err := engine.inspectDuplicateRawMIME(context.Background(), map[string][]store.DuplicateMessageRow{"bodies": rows})
+	require.NoError(err)
+	require.NotEmpty(info[rows[0].ID].bodyHash)
+	require.NotEmpty(info[rows[1].ID].bodyHash)
+	require.NotEmpty(info[rows[2].ID].bodyHash)
+	assert.NotEqual(info[rows[0].ID].bodyHash, info[rows[1].ID].bodyHash)
+	assert.Equal(info[rows[0].ID].bodyHash, info[rows[2].ID].bodyHash)
+}
 
 func TestNormalizeRawMIME(t *testing.T) {
 	tests := []struct {

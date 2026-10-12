@@ -5,11 +5,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	msgmime "go.kenn.io/msgvault/internal/mime"
+
+	"github.com/jhillyerd/enmime/v2/mediatype"
 )
 
 // applePlaceholderHeader marks an attachment part whose body Apple Mail did
@@ -17,10 +22,78 @@ import (
 // Messages/ directory instead, under Attachments/<msg>/<part-index>/<name>.
 const applePlaceholderHeader = "X-Apple-Content-Length:"
 
-var (
-	boundaryRe = regexp.MustCompile(`(?i)boundary\s*=\s*"?([^";\s]+)"?`)
-	filenameRe = regexp.MustCompile(`(?i)filename="?([^";]+)"?`)
-)
+var filenameRe = regexp.MustCompile(`(?i)filename="?([^";]+)"?`)
+
+// PlaceholderFilenames returns each placeholder's filename, preserving repeated names.
+func PlaceholderFilenames(raw []byte) []string {
+	var names []string
+	for _, part := range PlaceholderAttachments(raw) {
+		names = append(names, part.Filename)
+	}
+	return names
+}
+
+// PlaceholderAttachments returns placeholder identities, preserving repeated parts.
+func PlaceholderAttachments(raw []byte) []msgmime.Attachment {
+	if !bytes.Contains(raw, []byte(applePlaceholderHeader)) {
+		return nil
+	}
+	lines := strings.Split(string(raw), "\n")
+	hdrEnd := indexBlank(lines, 0)
+	if hdrEnd < 0 {
+		return nil
+	}
+	var placeholders []msgmime.Attachment
+	var visit func([]string, []string)
+	visit = func(body, header []string) {
+		if hasPlaceholder(header) {
+			placeholders = append(placeholders, msgmime.AttachmentHeaders(strings.TrimPrefix(unfold(header), "\n")))
+		}
+		for _, part := range multipartParts(body, header) {
+			partHeader := body[part.start+1 : part.headerEnd]
+			visit(body[part.headerEnd+1:part.end], partHeader)
+		}
+	}
+	visit(lines[hdrEnd+1:], lines[:hdrEnd])
+	return placeholders
+}
+
+type mimePart struct {
+	start, headerEnd, end int
+}
+
+func boundaryLine(line string) string {
+	return strings.TrimRight(strings.TrimSuffix(line, "\r"), " \t")
+}
+
+func multipartParts(lines, header []string) []mimePart {
+	boundary := findBoundary(header)
+	if boundary == "" {
+		return nil
+	}
+	open, closeB := "--"+boundary, "--"+boundary+"--"
+	var parts []mimePart
+	for i := 0; i < len(lines); {
+		line := boundaryLine(lines[i])
+		if line == closeB {
+			break
+		}
+		if line != open {
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(lines) && boundaryLine(lines[end]) != open && boundaryLine(lines[end]) != closeB {
+			end++
+		}
+		headerEnd := indexBlank(lines[:end], i+1)
+		if headerEnd >= 0 {
+			parts = append(parts, mimePart{i, headerEnd, end})
+		}
+		i = end
+	}
+	return parts
+}
 
 // attachmentsDir returns Apple Mail's Attachments/<num> directory for the
 // message at path, without checking whether the directory exists. It returns
@@ -67,12 +140,11 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	if hdrEnd < 0 {
 		return raw, 0, nil
 	}
-	boundary := findBoundary(lines[:hdrEnd])
-	if boundary == "" {
-		return raw, 0, nil
+	parts := multipartParts(lines, lines[:hdrEnd])
+	partsByStart := make(map[int]mimePart, len(parts))
+	for _, part := range parts {
+		partsByStart[part.start] = part
 	}
-	open, closeB := "--"+boundary, "--"+boundary+"--"
-
 	var out []string
 	restored := 0
 	var restoreErr error
@@ -80,7 +152,8 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 	i := 0
 	for i < len(lines) {
 		line := lines[i]
-		if strings.TrimSuffix(line, "\r") != open {
+		part, ok := partsByStart[i]
+		if !ok {
 			out = append(out, line)
 			i++
 			continue
@@ -94,11 +167,7 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 		}
 		out = append(out, line)
 		i++
-		phEnd := indexBlank(lines, i)
-		if phEnd < 0 {
-			out = append(out, lines[i:]...)
-			break
-		}
+		phEnd := part.headerEnd
 		header := lines[i:phEnd]
 		if !hasPlaceholder(header) {
 			out = append(out, header...)
@@ -122,7 +191,7 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 		restoredHeader = append(restoredHeader, "Content-Transfer-Encoding: base64"+cr)
 		// Skip files already known to exceed the budget, then bound the read
 		// and charge its actual size in case the cache changed after Stat.
-		file, size, err := resolveAttachment(attDir, strconv.Itoa(partIndex), findFilename(header))
+		file, size, err := resolveAttachment(attDir, strconv.Itoa(partIndex), findFilename(header), attachmentFilename(header))
 		headerGrowth := len(strings.Join(restoredHeader, "\n")) - len(strings.Join(header, "\n"))
 		cost := encodedSize(size, len(cr)+1) + int64(headerGrowth)
 		var content []byte
@@ -144,13 +213,7 @@ func RestoreAttachments(raw []byte, messagePath string, maxBytes int64) ([]byte,
 		for _, l := range base64Lines(content) {
 			out = append(out, l+cr)
 		}
-		i = phEnd + 1
-		for i < len(lines) {
-			if l := strings.TrimSuffix(lines[i], "\r"); l == open || l == closeB {
-				break
-			}
-			i++
-		}
+		i = part.end
 		restored++
 	}
 	return []byte(strings.Join(out, "\n")), restored, restoreErr
@@ -191,8 +254,9 @@ func hasPlaceholder(header []string) bool {
 func unfold(header []string) string {
 	var b strings.Builder
 	for _, h := range header {
+		h = strings.TrimSuffix(h, "\r")
 		if strings.HasPrefix(h, " ") || strings.HasPrefix(h, "\t") {
-			b.WriteString(strings.TrimLeft(h, " \t"))
+			b.WriteString(h)
 			continue
 		}
 		b.WriteString("\n")
@@ -203,26 +267,35 @@ func unfold(header []string) string {
 
 func findBoundary(header []string) string {
 	for l := range strings.SplitSeq(unfold(header), "\n") {
-		if !strings.HasPrefix(strings.ToLower(l), "content-type:") {
+		name, value, _ := strings.Cut(l, ":")
+		if !strings.EqualFold(name, "Content-Type") {
 			continue
 		}
-		if m := boundaryRe.FindStringSubmatch(l); m != nil {
-			return m[1]
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(value))
+		if err == nil && strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+			return params["boundary"]
+		}
+		if err != nil {
+			mediaType, params, _, err = mediatype.Parse(strings.TrimSpace(value))
+			if err == nil && strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+				return params["boundary"]
+			}
 		}
 	}
 	return ""
 }
 
-// findFilename returns the attachment's filename from the part header, or ""
-// when there is none or when the value is not a plain file name. The header
-// is sender-controlled, so anything with a path separator or a parent
-// reference is rejected here rather than being joined onto a path later.
+// findFilename returns the legacy filename spelling for cache lookup.
 func findFilename(header []string) string {
 	m := filenameRe.FindStringSubmatch(unfold(header))
 	if m == nil {
 		return ""
 	}
-	name := strings.TrimSpace(m[1])
+	return m[1]
+}
+
+func plainFilename(name string) string {
+	name = strings.TrimSpace(name)
 	if name == "" || name == "." || name == ".." ||
 		strings.ContainsAny(name, `/\`) || name != filepath.Base(name) {
 		return ""
@@ -230,15 +303,33 @@ func findFilename(header []string) string {
 	return name
 }
 
+func attachmentFilename(header []string) string {
+	var contentType, disposition string
+	for line := range strings.SplitSeq(unfold(header), "\n") {
+		key, value, _ := strings.Cut(line, ":")
+		switch {
+		case strings.EqualFold(key, "Content-Type"):
+			contentType = strings.TrimSpace(value)
+		case strings.EqualFold(key, "Content-Disposition"):
+			disposition = strings.TrimSpace(value)
+		}
+	}
+	return msgmime.AttachmentFilename(contentType, disposition)
+}
+
 // resolveAttachment returns the path and size of attDir/<partID>/<name>
 // without reading it. When the exact name cannot be resolved but the part directory
 // holds exactly one file, that file is used, since Apple Mail stores one file
 // per part and may have decoded the name differently than the raw header
-// spells it. name must already have passed findFilename's validation.
-func resolveAttachment(attDir, partID, name string) (string, int64, error) {
+// spells it. Names are validated before joining them onto the cache directory.
+func resolveAttachment(attDir, partID string, names ...string) (string, int64, error) {
 	dir := filepath.Join(attDir, partID)
 	var nameErr error
-	if name != "" {
+	for _, name := range names {
+		name = plainFilename(name)
+		if name == "" {
+			continue
+		}
 		full := filepath.Join(dir, name)
 		if fi, err := os.Stat(full); err == nil && fi.Mode().IsRegular() {
 			return full, fi.Size(), nil

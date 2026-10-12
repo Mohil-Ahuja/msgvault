@@ -49,6 +49,35 @@ func TestMessageMIMEAttachmentsContextIncludesOccurrenceState(t *testing.T) {
 	assertions.Equal("part@example.test", refs[0].ContentID)
 }
 
+func TestStoredAttachmentEvidenceContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "evidence@example.test")
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "evidence", "Evidence")
+	require.NoError(err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "evidence-message")
+	for _, ref := range []store.AttachmentWrite{
+		{SourcePartKey: "mime:1", ContentHash: "intact", StoragePath: "attachments/intact", ContentID: "logo", Role: store.AttachmentRoleInline, RoleSource: store.AttachmentRoleSourceMIMEDisposition},
+		{SourcePartKey: "mime:2", ContentHash: "missing-path"},
+		{SourcePartKey: "mime:3", StoragePath: "attachments/missing-hash"},
+		{SourcePartKey: "remote-image:chart", SourceAttachmentID: "remote-image:chart", ContentHash: "remote", StoragePath: "attachments/remote"},
+	} {
+		require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, ref))
+	}
+	refs, err := st.StoredAttachmentEvidenceContext(t.Context(), messageID)
+	require.NoError(err)
+	require.Len(refs, 2)
+	assert.Equal("intact", refs[0].ContentHash)
+	assert.Equal("mime:1", refs[0].SourcePartKey)
+	assert.Equal("logo", refs[0].ContentID)
+	assert.Equal(store.AttachmentRoleInline, refs[0].Role)
+	assert.Equal(store.AttachmentRoleSourceMIMEDisposition, refs[0].RoleSource)
+	assert.Equal("remote", refs[1].ContentHash)
+	assert.Equal("remote-image:chart", refs[1].SourceAttachmentID)
+}
+
 func persistedProviderRef(ref store.AttachmentRef) store.AttachmentRef {
 	if ref.Role == "" {
 		ref.Role = store.AttachmentRoleUnknown

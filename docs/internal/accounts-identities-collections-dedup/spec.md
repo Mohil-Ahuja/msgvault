@@ -340,6 +340,8 @@ visible in dry-run output.
 The public [Deduplication](../../usage/deduplication.md) guide carries
 the rendered survivor-selection diagram.
 
+A restored Apple Mail copy can replace the priority winner when it preserves the winner's message and attachments.
+
 ### Effects of applying dedup
 
 A successful `deduplicate` run:

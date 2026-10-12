@@ -60,6 +60,11 @@ func (s *Store) MessageMIMEAttachmentsContext(ctx context.Context, messageID int
 	return s.messageAttachmentsWhere(ctx, messageID, `source_attachment_id IS NULL`)
 }
 
+// StoredAttachmentEvidenceContext returns stored attachment identities for duplicate preservation.
+func (s *Store) StoredAttachmentEvidenceContext(ctx context.Context, messageID int64) ([]AttachmentRef, error) {
+	return s.messageAttachmentsWhere(ctx, messageID, `storage_path IS NOT NULL AND storage_path != '' AND content_hash IS NOT NULL AND content_hash != ''`)
+}
+
 func (s *Store) messageAttachmentsWhere(ctx context.Context, messageID int64, where string, args ...any) ([]AttachmentRef, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''), COALESCE(content_hash, ''),

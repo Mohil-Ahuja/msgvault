@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/deletion"
+	"go.kenn.io/msgvault/internal/emlx"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -196,7 +197,16 @@ type DuplicateMessage struct {
 	HasSentLabel     bool
 	FromEmail        string
 	MatchedIdentity  bool
-	normalizedHash   string
+
+	normalizedHash          string
+	placeholderCount        int
+	parsedAttachmentCount   int
+	parsedAttachmentsByHash map[string][]attachmentIdentity
+	storedAttachmentsByHash map[string][]attachmentIdentity
+	placeholderNames        map[attachmentIdentity]int
+	storedRemoteHashes      map[string]int
+	bodyHash                string
+	storedAttachmentCount   int
 }
 
 // IsSentCopy reports whether this message appears to be the sender-side
@@ -354,7 +364,7 @@ func (e *Engine) loadScanData(ctx context.Context) (scanData, error) {
 	if err != nil {
 		return scanData{}, err
 	}
-	data.rawMIME, err = e.inspectDuplicateRawMIME(rawMessageIDs(data.messages))
+	data.rawMIME, err = e.inspectDuplicateRawMIME(ctx, data.messages)
 	if err != nil {
 		return scanData{}, fmt.Errorf("fingerprint duplicate raw MIME: %w", err)
 	}
@@ -442,6 +452,14 @@ func (e *Engine) duplicateMessage(
 		ArchivedAt: row.ArchivedAt, IsFromMe: row.IsFromMe,
 		HasSentLabel: row.HasSentLabel, FromEmail: row.FromEmail,
 		MatchedIdentity: matched, normalizedHash: rawInfo.normalizedHash,
+		placeholderCount:        rawInfo.placeholderCount,
+		parsedAttachmentCount:   rawInfo.parsedAttachmentCount,
+		parsedAttachmentsByHash: rawInfo.parsedAttachmentsByHash,
+		storedAttachmentsByHash: rawInfo.storedAttachmentsByHash,
+		placeholderNames:        rawInfo.placeholderNames,
+		storedRemoteHashes:      rawInfo.storedRemoteHashes,
+		bodyHash:                rawInfo.bodyHash,
+		storedAttachmentCount:   rawInfo.storedAttachmentCount,
 	}
 }
 
@@ -797,20 +815,33 @@ func decodeRawMIME(raw []byte, compression string) ([]byte, error) {
 	return raw, nil
 }
 
+type attachmentIdentity struct {
+	filename, contentID, disposition string
+}
+
 type duplicateRawMIMEInfo struct {
-	normalizedHash  string
-	rfc822MessageID string
+	bodyHash                string
+	storedAttachmentCount   int
+	placeholderCount        int
+	parsedAttachmentCount   int
+	parsedAttachmentsByHash map[string][]attachmentIdentity
+	storedAttachmentsByHash map[string][]attachmentIdentity
+	placeholderNames        map[attachmentIdentity]int
+	storedRemoteHashes      map[string]int
+	normalizedHash          string
+	rfc822MessageID         string
 	// messageIDChecked is true whenever raw MIME exists. An empty ID means
 	// the raw message could not confirm the stored value.
 	messageIDChecked bool
 }
 
 func (e *Engine) inspectDuplicateRawMIME(
-	messageIDs []int64,
+	ctx context.Context, messagesByGroup map[string][]store.DuplicateMessageRow,
 ) (map[int64]duplicateRawMIMEInfo, error) {
+	messageIDs := rawMessageIDs(messagesByGroup)
 	infoByID := make(map[int64]duplicateRawMIMEInfo, len(messageIDs))
-	err := e.store.StreamMessageRaw(
-		messageIDs,
+	err := e.store.StreamMessageRawContext(
+		ctx, messageIDs,
 		func(messageID int64, rawData []byte, compression string) {
 			info := duplicateRawMIMEInfo{messageIDChecked: true}
 			raw, decodeErr := decodeRawMIME(rawData, compression)
@@ -821,6 +852,14 @@ func (e *Engine) inspectDuplicateRawMIME(
 				return
 			}
 			info.normalizedHash = sha256Hex(normalizeRawMIME(raw))
+			placeholders := emlx.PlaceholderAttachments(raw)
+			info.placeholderCount = len(placeholders)
+			if len(placeholders) > 0 {
+				info.placeholderNames = make(map[attachmentIdentity]int)
+				for _, part := range placeholders {
+					info.placeholderNames[attachmentIdentity{part.Filename, part.ContentID, part.Disposition}]++
+				}
+			}
 			parsed, _ := msgmime.ParseWithRecovery(raw, "")
 			if parsed != nil {
 				info.rfc822MessageID = msgmime.NormalizeMessageID(parsed.MessageID)
@@ -830,6 +869,83 @@ func (e *Engine) inspectDuplicateRawMIME(
 	)
 	if err != nil {
 		return nil, err
+	}
+	var attachmentMessageIDs []int64
+	for _, messages := range messagesByGroup {
+		needsAttachments := false
+		for _, message := range messages {
+			if infoByID[message.ID].placeholderCount > 0 {
+				needsAttachments = true
+				break
+			}
+		}
+		if needsAttachments {
+			for _, message := range messages {
+				attachmentMessageIDs = append(attachmentMessageIDs, message.ID)
+			}
+		}
+	}
+	err = e.store.StreamMessageRawContext(ctx, attachmentMessageIDs, func(messageID int64, rawData []byte, compression string) {
+		raw, decodeErr := decodeRawMIME(rawData, compression)
+		if decodeErr != nil {
+			return
+		}
+		parsed, parseErr := msgmime.ParseWithRecovery(raw, "")
+		if parseErr != nil || parsed == nil {
+			return
+		}
+		info := infoByID[messageID]
+		info.bodyHash = sha256Hex([]byte(parsed.BodyText)) + sha256Hex([]byte(parsed.BodyHTML))
+		for _, attachment := range parsed.Attachments {
+			if len(attachment.Content) == 0 {
+				continue
+			}
+			if info.parsedAttachmentsByHash == nil {
+				info.parsedAttachmentsByHash = make(map[string][]attachmentIdentity)
+			}
+			info.parsedAttachmentCount++
+			info.parsedAttachmentsByHash[attachment.ContentHash] = append(info.parsedAttachmentsByHash[attachment.ContentHash], attachmentIdentity{attachment.Filename, attachment.ContentID, attachment.Disposition})
+		}
+		infoByID[messageID] = info
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range attachmentMessageIDs {
+		attachments, err := e.store.StoredAttachmentEvidenceContext(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("get duplicate attachment evidence: %w", err)
+		}
+		info := infoByID[id]
+		if len(attachments) == 0 {
+			continue
+		}
+		info.storedAttachmentsByHash = make(map[string][]attachmentIdentity)
+		info.storedRemoteHashes = make(map[string]int)
+		matched := make(map[string]map[int]bool)
+		for _, attachment := range attachments {
+			if attachment.SourceAttachmentID != "" {
+				info.storedRemoteHashes[attachment.SourceAttachmentID+"\x00"+attachment.ContentHash]++
+				continue
+			}
+			hash := attachment.ContentHash
+			if matched[hash] == nil {
+				matched[hash] = make(map[int]bool)
+			}
+			// Each stored row vouches for one occurrence, including legacy rows without part keys.
+			for i, part := range info.parsedAttachmentsByHash[hash] {
+				role, _ := store.AttachmentRoleFromMIME(part.disposition, false, part.contentID)
+				if matched[hash][i] || part.filename != attachment.Filename || part.contentID != attachment.ContentID ||
+					(role != attachment.Role && (attachment.Role != store.AttachmentRoleUnknown || role == store.AttachmentRoleInline)) {
+					continue
+				}
+				info.storedAttachmentsByHash[hash] = append(info.storedAttachmentsByHash[hash], part)
+				info.storedAttachmentCount++
+				matched[hash][i] = true
+				break
+			}
+		}
+		infoByID[id] = info
 	}
 	return infoByID, nil
 }
@@ -877,7 +993,82 @@ func (e *Engine) selectSurvivor(group *DuplicateGroup) {
 			best = i
 		}
 	}
+	if group.Messages[best].placeholderCount > 0 {
+		winner := best
+		replacement := -1
+		for _, i := range candidates {
+			if preservesAppleCopy(group.Messages[i], group.Messages[winner]) &&
+				(replacement < 0 || e.isBetter(group.Messages[i], group.Messages[replacement], priorityMap, usePayloadCompleteness)) {
+				replacement = i
+			}
+		}
+		if replacement >= 0 {
+			best = replacement
+		}
+	}
 	group.Survivor = best
+}
+
+func preservesAppleCopy(replacement, candidate DuplicateMessage) bool {
+	if replacement.placeholderCount != 0 || replacement.SourceID != candidate.SourceID ||
+		store.NormalizeIdentifierForCompare(strings.TrimSpace(replacement.FromEmail)) != store.NormalizeIdentifierForCompare(strings.TrimSpace(candidate.FromEmail)) ||
+		strings.TrimSpace(replacement.Subject) != strings.TrimSpace(candidate.Subject) ||
+		replacement.bodyHash == "" || replacement.bodyHash != candidate.bodyHash ||
+		replacement.storedAttachmentCount < candidate.parsedAttachmentCount+candidate.placeholderCount {
+		return false
+	}
+	remainingNames := make(map[attachmentIdentity]int)
+	for hash, names := range replacement.storedAttachmentsByHash {
+		intactNames := make(map[attachmentIdentity]int)
+		for _, name := range candidate.parsedAttachmentsByHash[hash] {
+			intactNames[name]++
+		}
+		for _, name := range names {
+			if intactNames[name] > 0 {
+				intactNames[name]--
+				continue
+			}
+			remainingNames[name]++
+		}
+		for _, count := range intactNames {
+			if count > 0 {
+				return false
+			}
+		}
+	}
+	for hash, names := range candidate.parsedAttachmentsByHash {
+		if len(replacement.storedAttachmentsByHash[hash]) < len(names) {
+			return false
+		}
+	}
+	for name, count := range candidate.placeholderNames {
+		if name.filename == "" {
+			continue
+		}
+		if remainingNames[name] < count {
+			return false
+		}
+		remainingNames[name] -= count
+	}
+	for name, count := range candidate.placeholderNames {
+		if name.filename != "" {
+			continue
+		}
+		for part, available := range remainingNames {
+			if part.contentID == name.contentID && part.disposition == name.disposition {
+				count -= available
+			}
+		}
+		if count > 0 {
+			return false
+		}
+	}
+	for hash, count := range candidate.storedRemoteHashes {
+		if replacement.storedRemoteHashes[hash] < count {
+			return false
+		}
+	}
+	return true
 }
 
 func allIndexes(n int) []int {
@@ -1643,6 +1834,7 @@ func (e *Engine) formatSurvivorMethodology(sb *strings.Builder) {
 	sb.WriteString("  Tiebreakers: has raw MIME > when all eligible copies have matching normalized MIME, " +
 		"more attachments > attachment signal > larger payload; then metadata quality > more labels > " +
 		"earlier archived_at > lower id.\n")
+	sb.WriteString("  A restored Apple Mail copy can replace the priority winner when it preserves the winner's message and attachments.\n")
 	sb.WriteString("  Metadata quality: one point each for native provider message ID, threading evidence, and Message-ID.\n\n")
 }
 

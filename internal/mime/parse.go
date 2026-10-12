@@ -28,6 +28,23 @@ var envelopeParser = enmime.NewParser(
 	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
 )
 
+// AttachmentFilename uses the archive parser's attachment header handling.
+func AttachmentFilename(contentType, disposition string) string {
+	if contentType == "" {
+		contentType = fallbackContentType
+	}
+	return AttachmentHeaders("Content-Type: " + contentType + "\nContent-Disposition: " + disposition).Filename
+}
+
+// AttachmentHeaders reads attachment identity using the archive parser.
+func AttachmentHeaders(header string) Attachment {
+	part, err := envelopeParser.ReadParts(strings.NewReader(header + "\n\n"))
+	if err != nil {
+		return Attachment{}
+	}
+	return makeAttachment(part, false)
+}
+
 // Message represents a parsed email message.
 type Message struct {
 	Subject string
